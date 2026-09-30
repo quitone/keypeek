@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+noyalib = { version = "0.0", features = ["compat-serde-yaml"] }
+dirs = "6"
+
+[dev-dependencies]
+pretty_assertions = "1"

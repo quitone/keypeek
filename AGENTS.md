@@ -17,15 +17,19 @@ Keypeek（键览）：跨平台只读快捷键浏览桌面工具（Rust + fltk-r
 | 层 | 禁止依赖 |
 |---|---|
 | domain | fltk、std::fs、dirs |
-| app | fltk、std::fs、serde_yaml |
+| app | fltk、std::fs、noyalib |
 | infra | fltk |
-| ui | std::fs、serde_yaml、dirs |
+| ui | std::fs、noyalib、dirs |
+
+YAML 能力由 `noyalib` 提供（ADR-008，`serde_yaml` 已归档不用）；禁令同样覆盖它的兼容路径 `noyalib::compat::serde_yaml`。
 
 新增任何 `use` / 跨层调用前先核对上表。
 
 ## 构建与验证
 
-- 工具链由 `rust-toolchain.toml` 固定：stable + rustfmt + clippy
+- 工具链由 `rust-toolchain.toml` 固定：stable + rustfmt + clippy（channel 保持浮动 `stable`，写死具体版本号会让 rustup 去下载版本化通道，本机实测阻塞构建 10 分钟以上）
+- MSRV 由 `Cargo.toml` 的 `rust-version = "1.86"` 声明（`noyalib` 0.0.51 的硬性要求）
+- CI 缓存 key 必须为 `[os, rust-toolchain.toml, Cargo.lock]`；`Cargo.lock` 不含 toolchain 信息，只按锁缓存会命中不同编译器版本
 - 脚手架验收门禁：`scripts/verify-s0-1.sh`（fmt → build → test → clippy `-D warnings` → 文件存在性检查）
 - 标准命令序：`cargo fmt --check` → `cargo build` → `cargo test` → `cargo clippy --all-targets -- -D warnings`
 - `Cargo.lock` 已提交且需保持（CI 用 `--locked`）；`target/` 已 gitignore

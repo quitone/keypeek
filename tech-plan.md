@@ -52,11 +52,15 @@
 | 层 | 允许依赖 | 禁止依赖 |
 |---|---|---|
 | domain | 标准库、纯数据 crate（serde derive、indexmap） | fltk、std::fs、dirs |
-| app | domain、纯数据结构 | fltk、std::fs、serde_yaml |
-| infra | domain、serde_yaml、image、resvg、dirs、std::fs | fltk |
-| ui | app（只发 Msg）、fltk | std::fs、serde_yaml、dirs |
+| app | domain、纯数据结构 | fltk、std::fs、noyalib |
+| infra | domain、noyalib、image、resvg、dirs、std::fs | fltk |
+| ui | app（只发 Msg）、fltk | std::fs、noyalib、dirs |
 
 CI 中用脚本 grep 强制，任何越界依赖阻塞合并。
+
+> **ADR-008 落地后的改名**：本项目不使用已归档的 `serde_yaml`，YAML 能力由 `noyalib` 提供，因此上表的禁令项从 `serde_yaml` 改为 `noyalib`。grep 模式必须同时覆盖兼容 shim 路径 `noyalib::compat::serde_yaml`（写 `use serde_yaml` 反而不会命中，因为该 crate 不在依赖树里）。
+>
+> **待 S1 收敛的既有歧义**：`domain::parse`（任务 S1-9）需要 YAML `Value` 类型，但 §2.2 的 domain 允许列只写了「标准库、纯数据 crate」。`noyalib::Value` 是纯数据（无 IO），按 §3.2 的有序字段要求它是必要输入；这一条要么写进 domain 允许列，要么改成「infra 解析成中间 Value 树再交给 domain」。两种写法对 S1-9 的实现位置影响不同，须在 S1 开工前定案，不能靠 grep 脚本碰运气。
 
 ### 2.3 目录结构
 
@@ -585,11 +589,27 @@ CI 中运行脚本，对 domain / ui / infra 三个目录分别 grep 禁止的 `
 ---
 
 ### ADR-008：YAML 库选型
-**状态**：已接受
+**状态**：已接受（2026-10-01 依实测修订）
 **背景**：主流 `serde_yaml` 已被作者归档（2024-03）。
-**决策**：使用社区维护的 fork，API 与 0.9 兼容。
+**决策**：使用 `noyalib`（独立实现，非 `serde_yaml` 的 fork），开启 `compat-serde-yaml` feature 取 `noyalib::compat::serde_yaml` 兼容层，其内部按 `ParserConfig::serde_yaml_compat()` 解析以复现 `serde_yaml` 0.9 的可观测行为。版本钉为 `"0.0.51"`（caret 限定在 `0.0.*`）；可复现性由已提交的 `Cargo.lock` + CI `--locked` 承担，不用 `=0.0.51` 死钉，以便 CVE 可经 `cargo update` 修复。
 **备选**：其他 fork（维护活跃度存疑）、新解析库（API 差异大，需重写解析层）、锁定旧版（有已知 CVE 风险）。
-**影响**：若所选 fork 后续停滞，domain::parse 与具体库解耦（只依赖通用 Value 类型），替换成本限于一个文件。
+**影响**：若所选库后续停滞，domain::parse 与具体库解耦（只依赖通用 Value 类型），替换成本限于一个文件。
+
+**实测行为（noyalib 0.0.51 compat 层，2026-10-01，直接反序列化进 `Value`）**：
+
+| 输入 | 观测结果 | 对本项目的意义 |
+|---|---|---|
+| 多字段映射 | 迭代顺序 = 源文件顺序（`Mapping` 包 `IndexMap`） | 满足 §3.2「有序字段」，列推导可用 |
+| `yes` / `on` | `String`（`true` 才是 `Bool`） | 与 YAML 1.1 布尔解析习惯不同；`when: on` 这类值是字符串 |
+| `<<: *anchor` | 保留为名为 `<<` 的普通条目，别名值已展开 | S1-11 需显式处理，否则 `<<` 会变成一列 |
+| 重复键 `a: 1` / `a: 2` | 后者覆盖，**不报错** | 与「重复键应否告警」是产品决策，非库缺陷 |
+| `0123` / `1e999` | 字符串 | 字段类型异常判定（§6）按字符串处理 |
+| 超 `u64::MAX` 整数 | 解析报错 | 属于文件级失败路径，需在 fixture 固化 |
+| 非标量键 | 解析报错 | 同上 |
+| 未知字段 | 不报错（compat 层不走 `strict-deserialise`） | 符合「额外字段忽略」预期；`from_*_strict` 家族不要用 |
+
+兼容层行为依赖 `compat-serde-yaml` 隐含的 `lossless-u64`，且受 `ParserLimits::profile(SerdeYaml)` 的资源预算约束（别名放大、深度等）——这层预算正好是 R-05（超大/超深 YAML）的兜底，不要用自定义 limits 关掉。
+上表由 S0-2 的 `tests/dependency_smoke.rs` 长期看护顺序与 `list` 结构；其余边界（重复键、锚点与合并键、整数溢出）按 R-06 归入 S1-9/S1-13 的 fixture。
 
 ---
 

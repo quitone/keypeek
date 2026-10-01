@@ -15,7 +15,7 @@
 
 **技术栈**（技术方案 §2、§11）：
 - Rust（edition 2021+）、fltk-rs 自绘
-- 依赖：serde / serde_yaml 社区 fork / image / resvg / dirs
+- 依赖：serde / noyalib（`serde_yaml` 兼容层，ADR-008）/ image / resvg / dirs
 - 分层：`domain`（纯逻辑）→ `app`（状态机）→ `infra`（IO）/ `ui`（fltk）
 - CI：格式 + Clippy 严格 + 分层 grep 脚本 + Linux/Win 构建矩阵 + size-guard
 
@@ -38,7 +38,7 @@
 
 ## Sprint 0 — 项目脚手架与 CI 基座（1 周）
 
-### [ ] 任务 S0-1：创建 Cargo 项目与目录骨架
+### [x] 任务 S0-1：创建 Cargo 项目与目录骨架
 **描述**：按技术方案 §2.3 建立目录结构，`domain/app/infra/ui` 四个模块仅含空 `mod.rs` 与类型占位；`main.rs` 仅 `fn main() {}`。
 **验收标准**：
 - `cargo build` 通过，无警告
@@ -54,12 +54,18 @@
 
 ---
 
-### [ ] 任务 S0-2：依赖清单落地（含 ADR-008 YAML fork 选型）
-**描述**：`Cargo.toml` 加入 serde、serde_yaml 社区 fork、dirs；`dev-dependencies` 加 `pretty_assertions`。锁定 `Cargo.lock` 提交。
+### [x] 任务 S0-2：依赖清单落地（含 ADR-008 YAML fork 选型）
+**描述**：`Cargo.toml` 加入 serde、noyalib（`serde_yaml` 兼容层）、dirs；`dev-dependencies` 加 `pretty_assertions`。锁定 `Cargo.lock` 提交。
 **验收标准**：
 - `cargo build --locked` 通过
 - `Cargo.lock` 已提交
 - 依赖项在 README 记录维护状态（特别是 YAML fork）
+
+**实际落地与偏差**（2026-10-01）：YAML 选型为 `noyalib 0.0.51` + `compat-serde-yaml`（非 fork，是独立实现 + 兼容层，见 ADR-008 实测行为表）；新增 `rust-version = "1.86"`、`scripts/verify-s0-2.sh`（可失败断言版）与 `tests/dependency_smoke.rs`。
+
+**交接清单**：
+- **给 S0-3**：分层 grep 的禁止模式应为 `noyalib` 与 `noyalib::compat::serde_yaml`（写 `serde_yaml` 不会命中，该 crate 不在依赖树里）；domain 是否允许直接依赖 `noyalib::Value` 需先定案（tech-plan §2.2 已标注歧义）
+- **给 S0-4**：`cargo audit` 未进本地门禁脚本（tech-plan §11.1 无此阶段，且它依赖机器全局二进制与本地公告库路径）；若要在 CI 启用，由 CI 负责安装与公告库缓存，本机缺工具时按 not-run 记账；CI 缓存 key 需含 `rust-toolchain.toml` + `Cargo.lock`
 
 **对应方案**：ADR-008、N-04
 
@@ -808,7 +814,7 @@
 **开发技术栈**（技术方案 §2、§11）：
 - Rust stable，edition 2021+
 - fltk-rs（自绘 UI）
-- serde / serde_yaml 社区 fork（ADR-008）
+- serde / noyalib（`serde_yaml` 0.9 兼容层，ADR-008）
 - image（关闭非必需特性以省体积）
 - resvg / usvg + tiny-skia（ADR-005 待实测）
 - dirs（配置目录）

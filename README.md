@@ -204,6 +204,39 @@ A：不可以。Keypeek 是只读工具，请直接编辑 YAML 文件。
 
 ---
 
+## 🧱 依赖与维护状态
+
+面向维护者：这里是「为什么选它、坏了往哪退、什么时候真正引入」的单一记录处。选型依据见 `tech-plan.md` ADR-005 / ADR-008，分层禁令见 §2.2。
+
+### 已引入（Sprint 0）
+
+| crate | 钉定版本 | 用途 | 允许所在层 | 维护状态（核实日期） | 已知风险 | 退路 |
+|---|---|---|---|---|---|---|
+| `serde` | `1`（derive） | 反序列化派生 | domain / infra | 活跃，生态基座 | 无 | 无（不可替） |
+| `noyalib` | `0.0.51` + `compat-serde-yaml` | YAML 解析（替代已归档的 `serde_yaml`） | infra（domain 归属待 S1 定案，见 ADR-008） | **0.0.x 预发布**，单人维护（核实 2026-10-01） | 与上游 serde_yaml 0.9 存在布尔/合并键等行为差异；`0.0.*` 内可随时破坏兼容 | `domain::parse` 只依赖通用 `Value`，替换成本限于一个文件 |
+| `dirs` | `6` | 配置目录定位 | infra | 活跃 | Win/Linux 路径差异 | 自实现 `std::env` 分支 |
+| `pretty_assertions` | `1`（dev） | 断言差异可读 | tests | 活跃 | 无 | 去掉依赖即可 |
+
+### 计划引入（尚未进 `Cargo.toml`，勿提前加）
+
+| crate | 引入 Sprint | 用途 | 体积/风险备注 |
+|---|---|---|---|
+| `fltk` | S3 | 自绘 UI | 静态编译，Linux 需 X11 运行库（R-07） |
+| `indexmap` | S1/S2 | 有序字段承载 | `noyalib::Mapping` 已是 `IndexMap`，先确认能否直接复用再决定加依赖 |
+| `image` | S4 | PNG/JPEG/WebP/GIF 解码 | 需关闭非必需特性以省体积（S5-5） |
+| `resvg` / `usvg` / `tiny-skia` | S4 | SVG 栅格化 | R-02：可能撑破 15 MB，S5-5 实测后决定降级路径 |
+| `tempfile` | S0-5 | 单测临时目录注入 | dev 依赖 |
+
+### 版本与可复现约定
+
+- `Cargo.lock` 必须提交，CI 全程 `--locked`；上表的 caret 版本只是「允许 `cargo update` 修 CVE」的通道，不是自动升级许可。
+- `noyalib` 属 0.0.x：每次 `cargo update` 前跑 `cargo update --dry-run -p noyalib` 看目标版本，升级后必须重跑 `scripts/verify-s0-2.sh` 与 `tests/dependency_smoke.rs`（后者固化了 ADR-008 的实测语义）。
+- MSRV：`Cargo.toml` 的 `rust-version = "1.86"`（由 `noyalib` 要求）。`rust-toolchain.toml` 保持浮动 `stable`——写死具体版本号会让 rustup 下载版本化通道，实测阻塞构建 10 分钟以上。
+- 已归档的 `serde_yaml` / `serde_yml` 由门禁脚本禁止回流。
+- 当前依赖树规模：`cargo tree --locked` 共 35 个包（`cargo tree -d` 无重复版本，由门禁断言看护）。
+
+---
+
 ## 🐛 反馈与建议
 
 如果你遇到问题或有功能建议，欢迎提交 Issue。  

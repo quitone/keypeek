@@ -2,10 +2,12 @@
 name = "keypeek"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.86"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-noyalib = { version = "0.0", features = ["compat-serde-yaml"] }
+# 0.0.x 预发布版本：caret 限定在 0.0.*，保留 cargo update 修 CVE 的通路，可复现性由 Cargo.lock 承担
+noyalib = { version = "0.0.51", features = ["compat-serde-yaml"] }
 dirs = "6"
 
 [dev-dependencies]

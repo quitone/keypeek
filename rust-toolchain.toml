@@ -1,4 +1,7 @@
 [toolchain]
+# 保持浮动 stable：固定成具体版本号会触发 rustup 下载该版本化通道（本机 1.98.1 来自 stable 别名，
+# 实测阻塞构建 &gt; 10 分钟）。MSRV 由 Cargo.toml 的 rust-version = "1.86" 承担。
+# CI 缓存 key 必须为 [os, rust-toolchain.toml, Cargo.lock]，只按 Cargo.lock 缓存会命中不同 toolchain。
 channel = "stable"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

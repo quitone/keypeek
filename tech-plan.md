@@ -470,7 +470,7 @@ Window (resizable)
 
 **缓存 key 的真实构成**：`cargo-${runner.os}-${steps.toolchain.outputs.release}-${hashFiles('Cargo.lock')}`。其中编译器版本必须显式取 `rustc -vV` 的 `release:` 行——`hashFiles('rust-toolchain.toml')` 提供不了它声称的保护（该文件内容恒为 `channel = "stable"`，编译器版本变了哈希也不变）。缓存错配只会浪费编译时间、不会产生错误产物（cargo 自身指纹含编译器哈希），所以这是性能问题而非正确性问题。
 
-**缓存验收的两级指标**（避免把「配了缓存」当成「命中了缓存」）：① 同 commit 二次运行时缓存层日志出现 `Cache hit`；② 若将来引入 sccache，则要求 `sccache --show-stats` 的 `Compile hits > 0`，为 0 时记为「依赖图过小、预期无收益」，不记为缺陷。
+**缓存验收的两级指标**（避免把「配了缓存」当成「命中了缓存」）：① 同 commit 二次运行时缓存层日志出现 `Cache hit`——**已实测成立**（2026-10-02 对同一 commit 复跑，两个平台均命中主键 `cargo-Linux-1.98.1-a9cf6559…` / `cargo-Windows-1.98.1-8d6560ea…`，key 中的 `1.98.1` 即 `release:` 行，Post step 回 `not saving cache`）；② 若将来引入 sccache，则要求 `sccache --show-stats` 的 `Compile hits > 0`，为 0 时记为「依赖图过小、预期无收益」，不记为缺陷——当前不使用 sccache，此级留待 S3 引入 fltk 后再判断是否需要。
 
 **流水线自身契约的可证伪性**：`scripts/verify-s0-4.sh` 对 workflow 做 14 条语义断言（结构、触发完整性（pull_request + 主干 push 的 master/main 双列）、最小权限、action 钉 SHA、分层两个 step 齐全且只在 ubuntu、`--locked` 全覆盖、显式 Windows 标签且全仓无 `latest`、缓存 key 双要素、无后台 `&`、无服务器/守护/`|| true`、无 `continue-on-error`、汇总 job 契约、本地 parity），`--self-test` 用独立 canonical fixture 跑 **35 项断言**：27 个变异体/破坏样例必须各自以对应规则号变红（防止「因错误的原因变红」）、合法诱饵样例（`&&`、注释里的 `&`、`>&2` 重定向、`${{ }}`、YAML 锚点）必须保持全绿、结构缺失必须 fail-closed。YAML schema 合法性由 `actionlint` 负责，本机未安装时打 `[not-run]` 记账，不静默通过。
 
@@ -478,7 +478,7 @@ Window (resizable)
 
 ### 11.2 依赖规则检查
 
-CI 中运行 `scripts/check-layering.sh`，对 §2.2 禁令表逐条 grep。**四层全覆盖**（`domain` / `app` / `infra` / `ui`），任何越界阻塞合并。
+CI 中运行 `scripts/check-layering.sh`，对 §2.2 禁令表逐条 grep。**四层全覆盖**（`domain` / `app` / `infra` / `ui`），任何越界阻塞合并——「阻塞」于 2026-10-02 用一次性探针 PR 实测成立：`src/app/mod.rs` 真实引用 `noyalib::Value` 只让 `Dependency layering gate` 单步变红（fmt / build / clippy / test 全绿，归因唯一），`ci-required` 随之变红，`mergeStateStatus=BLOCKED`。
 
 - **两遍匹配，一份文本**：先用 awk 状态机剥掉注释（**保留行号**，违规能定位到 `文件:行号`），逐行遍与压平遍读的是同一份去注释文本。压平遍把整文件压成一行再匹配——`cargo fmt` 会把超长的 `use` 树拆成多行，实测拆行后的 `fs` 独占一行，**纯逐行 grep 存在可达假阴性**（fmt --check 与门禁同时绿灯），必须有这一遍。
 - **命中形态三类**：① import（`use` / `pub use` / `pub(crate) use` / `extern crate`，含 `as` 别名定义行）；② 完整限定路径（`token::…`、`::token::…`，覆盖无 import 的 `std::fs::read(...)` 写法）；③ 花括号多段（`use std::{fs, io}`，同行由逐行遍覆盖，被 rustfmt 拆行后由压平遍覆盖）。只查 `use` 会被限定路径绕过，而本项目实际代码风格（`tests/dependency_smoke.rs`）正是别名 + 路径调用。

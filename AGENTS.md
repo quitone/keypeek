@@ -31,6 +31,8 @@ YAML 能力由 `noyalib` 提供（ADR-008，`serde_yaml` 已归档不用）；�
 - MSRV 由 `Cargo.toml` 的 `rust-version = "1.86"` 声明（`noyalib` 0.0.51 的硬性要求）
 - CI 缓存 key = `[os, rustc -vV 的 release 行, hashFiles('Cargo.lock')]`。**不要**改成 `hashFiles('rust-toolchain.toml')`：该文件内容恒为 `channel = "stable"`，编译器版本变了哈希不变，它提供不了 AGENTS.md 曾声称的保护。错配只浪费编译时间（cargo 指纹本身含编译器哈希），不是正确性问题
 - CI 流水线：`.github/workflows/ci.yml`，job = `check`（ubuntu-24.04，全部静态检查与三道门禁）+ `build`（windows-2022 矩阵轴，只 `cargo build --locked`）+ `ci-required`（汇总，分支保护只把这个 check 名设为 required）；所有 action 钉到 40 位 commit SHA，禁用 `@vN`/`@main` 可变标签与 `*-latest` runner
+- 远端为 `github.com/quitone/keypeek`（public），**默认分支是 `master`**：写 `push: branches:` 时漏掉 `master` 会让主干推送静默不触发 CI（首跑实测踩过，现由 `verify-s0-4.sh` R2 三条断言看护）；分支保护的 required check 只设 `ci-required`（`strict=false`、`enforce_admins=false`）
+- 门禁有效性已有真实证据，改 CI 时不要退化：主干 run `36983307319` 全绿、同 commit 复跑命中目录缓存；探针 run `36984104277` 证明 `src/app` 越界引用 `noyalib` 只让分层 step 变红并阻塞合并（`mergeStateStatus=BLOCKED`），其余 step 保持绿
 - 流水线契约门禁：`bash scripts/verify-s0-4.sh`（14 组语义断言，同时被 CI 的 check job 调用）+ `bash scripts/verify-s0-4.sh --self-test`（35 项：27 个变异体/破坏样例各自以对应规则号变红、`&&` / 注释 `&` / `>&2` / `${{ }}` / YAML 锚点诱饵必须全绿、结构缺失 fail-closed）；改断言必须同步 `rules` 与 `expected_rule_pairs`
 - 改 CI 时的既有约束：分层检查依赖 GNU grep，只能放 ubuntu job；`cargo audit` 与 dependabot 属 S1，启用前必须先改 tech-plan §11.1；size-guard 属 S5-4
 - 脚手架验收门禁：`scripts/verify-s0-1.sh`（fmt → build → test → clippy `-D warnings` → 文件存在性检查）

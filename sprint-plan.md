@@ -65,7 +65,7 @@
 
 **交接清单**：
 - **给 S0-3**：分层 grep 的禁止模式应为 `noyalib` 与 `noyalib::compat::serde_yaml`（写 `serde_yaml` 不会命中，该 crate 不在依赖树里）；domain 是否允许直接依赖 `noyalib::Value` 需先定案（tech-plan §2.2 已标注歧义）→ **已于 S0-3 定案：放行，见 §2.2 注记**
-- **给 S0-4**：`cargo audit` 未进本地门禁脚本（tech-plan §11.1 无此阶段，且它依赖机器全局二进制与本地公告库路径）；若要在 CI 启用，由 CI 负责安装与公告库缓存，本机缺工具时按 not-run 记账；CI 缓存 key 需含 `rust-toolchain.toml` + `Cargo.lock`
+- **给 S0-4**：`cargo audit` 未进本地门禁脚本（tech-plan §11.1 无此阶段，且它依赖机器全局二进制与本地公告库路径）；若要在 CI 启用，由 CI 负责安装与公告库缓存，本机缺工具时按 not-run 记账；CI 缓存 key 需含 `rust-toolchain.toml` + `Cargo.lock` → **后半句已被 S0-4 实测推翻**：`rust-toolchain.toml` 内容恒定，给不出编译器版本保护；实际 key 用 `rustc -vV` 的 `release:` 行，命中证据见 S0-4b 第 3 步。audit 部分照计划移交 S1，本轮未启用
 
 **对应方案**：ADR-008、N-04
 
@@ -80,7 +80,7 @@
 - [x] A3 门禁可证伪：`--self-test` **152 项断言**全通过（临时目录 fixture，不碰工作树）；**16 个变异体全部被自测抓到，0 存活**（删规则 / 删形态样例 / 压平遍整体失效 / awk 块注释状态机失效 / 把 grep rc=2 当干净 / 去掉缺目录检查 / 去掉空层检查 / 首个命中即停 / 只扫层根目录 / 裸 `*` 续行当注释 / 行命中后重复计数 / 压平正则丢花括号分支 / 逐行正则丢限定路径分支 / 逐行正则丢 import 分支 / 两遍同时丢限定路径分支 ×2）；其中「删规则仍自测通过」「样例基准取自样例列表自身」「逐行遍退化靠压平遍兜住而存活」三处漏洞是变异测试发现后补的（第三处补的断言是：单行样例必须报出 `文件:行号`）
 - [x] A4 头注释不自炸：`src/*/mod.rs:2` 列举禁用名的注释行不产生误报（自测负例长期看护）
 - [x] A4b rustfmt 拆行的跨行 `use` 树必须被拦：压平遍失效的变异体（V3）与新加的 4 个拆行样例（C3）双向看护；此前「fmt 会把 use 树留在同一行」的假设已被实测推翻
-- [ ] A5 脚本退出码非 0 时 CI 阻塞 → **本轮 not-run**，CI 在 S0-4；已交付集成契约（§11.2 末）
+- [x] A5 脚本退出码非 0 时 CI 阻塞 → 由 S0-4b 第 4 步的「故意红探针」实测收口：真实 run 中 `Dependency layering gate` 单步失败、`ci-required` 随之失败、PR `mergeStateStatus=BLOCKED`（证据见 S0-4b 第 4 步）
 
 **实际落地与偏差**：S0-2 交接的「domain 能否依赖 `noyalib::Value`」歧义**已在任务内定案为放行**（否则脚本要碰运气），据此 §2.2 domain 允许列写入 noyalib 纯数据类型、S1-9 代码落点为「infra 读文本、domain 持有 `noyalib::Value`」；§11.2 原写「domain / ui / infra 三个目录」漏了 app（app 是唯一带 noyalib 禁令的编排层），已改为四层并同步本任务描述。
 
@@ -93,14 +93,14 @@
 
 ---
 
-### [ ] 任务 S0-4：基础 CI 流水线
+### [x] 任务 S0-4：基础 CI 流水线
 **描述**：GitHub Actions 或等价 CI，包含 `check` 阶段（fmt + clippy -D warnings + layering + test）与 `build` 阶段（Linux + Windows 矩阵，sccache）。
 **验收标准**：
-- PR 触发 CI，任一阶段失败阻塞合并
-- 缓存命中 sccache
-- 无 `&` 后台进程、无启动服务器命令
+- [x] PR 触发 CI，任一阶段失败阻塞合并 —— 实测见 S0-4b 第 4 步（PR 触发成立 + `ci-required` 失败 + `mergeStateStatus=BLOCKED`）
+- [x] 缓存命中 sccache —— 判据已按实测改为「目录缓存主键命中」（见下方偏差与 S0-4b 第 3 步），两级指标的第 ① 级已证；sccache 本身不再使用
+- [x] 无 `&` 后台进程、无启动服务器命令 —— 本地由 `verify-s0-4.sh` R10/R11 双向看护，且在真实 run 中长期复跑
 
-**实际落地与偏差**（2026-10-02，S0-4a 已交付 / S0-4b 待执行）：
+**实际落地与偏差**（2026-10-02，S0-4a 与 S0-4b 均已交付）：
 
 - 交付物：`.github/workflows/ci.yml`（`check` ubuntu-24.04 + `build` windows-2022 + `ci-required` 汇总）、`scripts/verify-s0-4.sh`（14 组契约断言 + `--self-test` 35 项）。check job 依次跑 fmt → build → clippy → test → 分层 scan → 分层 self-test → `verify-s0-2.sh` → `verify-s0-4.sh`；本地与 CI 共用同一批命令，避免「CI 绿但本地门禁没人跑」。
 - **Linux 构建去重**：原描述"Linux + Windows 矩阵"里 Linux 那一轴与 check 的 `cargo build` 完全重复，故 Linux 产物由 check 覆盖、矩阵只留 Windows（S3 加 fltk 后重复成本会显著上升，届时再评估）。
@@ -108,17 +108,28 @@
 - **`sccache` 与 `hashFiles('rust-toolchain.toml')` 两处原方案均已更正**：后者内容恒定、给不出它声称的编译器版本保护，缓存 key 显式取 `rustc -vV` 的 `release:` 行。AGENTS.md 同步。
 - **本轮明确不做**：`cargo audit`、dependabot（移交 S1，启用前须先改 tech-plan §11.1，不让 job 跑在契约前面）；size-guard（S5-4）；产物上传（S5）。
 - **触发分支实测修正**：首次 push 后无任何 run——仓库默认分支是 `master`，而 workflow 原写 `branches: [main]`。现改为 `[master, main]`，并由 `verify-s0-4.sh` 的 R2 拆成三条断言（pull_request / 含 master / 含 main）长期看护，防止将来改名主干分支时主干推送静默不触发。
-- 验收条款的可证伪状态：第 3 条（无 `&` 后台 / 无服务器命令）**已本地证明**，由 `verify-s0-4.sh` 的 R10/R11 断言 + 诱饵样例双向看护；第 1、2 条 **not-run**——需要真实 GitHub remote，见下方 S0-4b。三条中只有 not-run 的两项未闭环，不以"配置已写好"充当"验收已通过"。
+- 验收条款的可证伪状态：三条**全部有真实证据**，见下方 S0-4b。此前第 1、2 条一直是 not-run（缺 remote），本轮补齐；未把「配置已写好」当作「验收已通过」。
 
-**S0-4b（需授权后执行，尚未做）**：
-1. 建 remote 并 push（对外可见动作，已获本轮授权，待执行时再确认仓库可见性）
-2. 设分支保护：required check = `ci-required`
-3. 同 commit 复跑取缓存命中证据（`Cache hit` 日志）
-4. **故意红一次**：提一个在 `domain` 加 `use fltk::*;` 的 PR，验证分层门禁真的阻塞合并（S0-3 遗留的 A5 项一并收口）
-5. 回填第 1、2 条验收与运行日志摘录
+**S0-4b 执行证据**（2026-10-02，公开仓库 `quitone/keypeek`，默认分支 `master`）：
+
+1. **建 remote 与首跑的教训**：首次 push 后**没有任何 run**——workflow 原写 `push: branches: [main]`，而默认分支是 `master`。改为 `[master, main]` 后主干推送才触发。这一类「静态检查看不见、只有实跑才暴露」的缺陷已固化进 `verify-s0-4.sh` 的 R2（拆成 pull_request / 含 master / 含 main 三条断言），self-test 随之从 33 项增至 **35 项**（新增两个主干分支变异体）。
+2. **主干全绿**：run [`36983307319`](https://github.com/quitone/keypeek/actions/runs/36983307319) —— `check` 与 `build (windows-2022)` 与 `ci-required` 全部 success，三个 job 的每一个 step 都是 success（check 15 step / build 8 step / 汇总 3 step，无一下降为 skipped 或 failure），check 内含分层 scan、分层 self-test 152 项、`verify-s0-2.sh`、`verify-s0-4.sh` 35 项。这是「Windows 独立编译通过 + 缓存未命中时全绿」两条验收的同一份证据。
+3. **缓存命中实证**：同一 commit `gh run rerun`（attempt 2）拿到主键命中，且 key 里带着编译器版本，证明 `hashFiles('rust-toolchain.toml')` 换成 `rustc -vV` 的 `release:` 行是对的：
+   - `Cache hit for: cargo-Linux-1.98.1-a9cf65592a828f49c3538edadc54c1f1ddacec0b0bfc0097914cf7d5601c5447`
+   - `Cache hit for: cargo-Windows-1.98.1-8d6560ea6f729bbf397403e985ca392e88f8b107ebc4a0d70e5762251ba71a65`
+   - 两个平台各自的 Post step 均回 `Cache hit occurred on the primary key …, not saving cache.` —— 命中即不重写，符合预期。
+   - 验收第 2 条的**第 ① 级（目录缓存命中）已证**；第 ② 级（依赖规模变大后的编译时间收益）在个位数依赖下无意义，留到 S3 引入 fltk 后测。
+4. **故意红一次（阻塞合并的唯一有效证据，同时收口 S0-3 的 A5）**：探针分支在 `src/app/mod.rs` 加一个真实使用 `noyalib::Value` 的函数（app 层禁 noyalib，走「完整限定路径」命中形态），PR [#1](https://github.com/quitone/keypeek/pull/1) / run [`36984104277`](https://github.com/quitone/keypeek/actions/runs/36984104277)：
+   - **归因唯一**是设计出来的：本地先实测 fmt / build / clippy `-D warnings` / test / `verify-s0-4.sh` 全绿，只有 `check-layering.sh` exit 1；CI 里同样只有 `Dependency layering gate` 这一步 failure，其后三步 skipped，而 `build (windows-2022)` 仍 success。
+   - 日志原文：`[violation] app 禁止 noyalib  src/app/mod.rs:5:pub fn layering_probe(value: noyalib::Value) -> noyalib::Value {` + `##[error]Process completed with exit code 1.`
+   - `ci-required` 随之 failure，`gh pr view 1` 给出 `mergeable=MERGEABLE`（代码无冲突）+ **`mergeStateStatus=BLOCKED`**（被 required check 拦下）—— 两个字段合起来才能证明「阻塞来自门禁而不是冲突」。
+   - 分支保护实测形态：required contexts = `ci-required`、`strict=false`、`enforce_admins=false`。选 `ci-required` 而非 `check` 是因为矩阵 job 名带参数（`build (windows-2022)`），required check 名不扩权、不会因矩阵参数化而静默失效。
+   - **未测项（显式记账）**：`enforce_admins=false` 下管理员能否用 `--admin` 绕过阻塞，本轮**没有实测**（尝试被安全策略拦下，且按计划该 PR 不得合并）。结论只能是「普通合并路径被阻塞」，不能延伸到「管理员也无法绕过」；若要这条证据，S1 开 `enforce_admins=true` 后再测。
+   - 探针已关闭、远程分支已删除，`master` 未受影响。
+5. **本地 parity 的真实价值**：check job 直接调用 `verify-s0-1/2/4.sh` 与 `check-layering.sh`，所以本地门禁与 CI 门禁是同一批脚本；改 CI 约束时本地跑一次 `verify-s0-4.sh` 就能知道 CI 会不会红。
 
 **交接清单**：
-- **给 S0-3 的收口**：A5（脚本退出码非 0 时 CI 阻塞）由 S0-4b 第 4 步的「故意红 PR」补齐证据，此前一直是 not-run
+- **给 S0-3 的收口**：A5 已收口（见 S0-4b 第 4 步），不再是 not-run
 - **给 S1**：`cargo audit`（本机已装 `cargo-audit`；CI 侧需自带安装 + RUSTSEC 公告库缓存，且必须先增补 tech-plan §11.1 表格）、dependabot（actions 与 cargo 分开设，cargo 侧不得跨 minor 自动 bump，与 `noyalib` caret 策略对齐）、`ci-required` 是否会因矩阵改名而失效的复验
 - **给 S3**：引入 fltk 后 Windows 需 `cmake`/`ninja`，Linux 若跑 GUI 相关测试需 display（sccache 对 CMake 构建无效）；届时 `check`/`build` 的重复编译成本上升，需重新评估是否把 clippy/test 只留单平台
 - **给 S5**：size-guard 与产物上传/发布链路；发布通道属 S5，不预埋
@@ -827,7 +838,7 @@
 
 ## 质量要求
 
-- [ ] **分层依赖规则**：CI grep 脚本阻塞越界（§2.2）
+- [x] **分层依赖规则**：CI grep 脚本阻塞越界（§2.2）—— 2026-10-02 由 S0-4b 探针实测：越界使 `check` 单步变红 → `ci-required` 变红 → PR `mergeStateStatus=BLOCKED`
 - [x] **命令不含后台进程**：CI 脚本无 `&`（`verify-s0-4.sh` R10/R11 断言，诱饵样例防 `&&` 误杀）；开发命令无 `&`
 - [x] **不写启动服务器的命令**：本应用是桌面 GUI，无 dev server；R11 禁止 `nohup` / `setsid` / `http.server` / `xvfb` / `python -m`
 - [ ] **键帽拆分 9 条用例 100% 通过**：CI 硬门禁

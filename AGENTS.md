@@ -35,6 +35,7 @@ YAML 能力由 `noyalib` 提供（ADR-008，`serde_yaml` 已归档不用）；�
 - 门禁有效性已有真实证据，改 CI 时不要退化：主干 run `36983307319` 全绿、同 commit 复跑命中目录缓存；探针 run `36984104277` 证明 `src/app` 越界引用 `noyalib` 只让分层 step 变红并阻塞合并（`mergeStateStatus=BLOCKED`），其余 step 保持绿
 - 流水线契约门禁：`bash scripts/verify-s0-4.sh`（14 组语义断言，同时被 CI 的 check job 调用）+ `bash scripts/verify-s0-4.sh --self-test`（35 项：27 个变异体/破坏样例各自以对应规则号变红、`&&` / 注释 `&` / `>&2` / `${{ }}` / YAML 锚点诱饵必须全绿、结构缺失 fail-closed）；改断言必须同步 `rules` 与 `expected_rule_pairs`
 - 改 CI 时的既有约束：分层检查依赖 GNU grep，只能放 ubuntu job；`cargo audit` 与 dependabot 属 S1，启用前必须先改 tech-plan §11.1；size-guard 属 S5-4
+- CI 的三处与原方案不符的取舍（不用 sccache 改用目录缓存、build 矩阵只留 Windows、audit/dependabot 归 S1）是 **ADR-011** 的决策内容，不要当成随手改文档回滚；回退的前提也是先改 §11.1
 - 脚手架验收门禁：`scripts/verify-s0-1.sh`（fmt → build → test → clippy `-D warnings` → 文件存在性检查）
 - 分层禁令检查：`bash scripts/check-layering.sh`（扫四层，真实仓库 <1s）+ `bash scripts/check-layering.sh --self-test`（含 152 项可证伪断言，约 30s，fixture 建在 `mktemp -d`）；改禁令必须同步 tech-plan §2.2、脚本 `rules` 与 `expected_rule_pairs`
 - 标准命令序：`cargo fmt --check` → `cargo build` → `cargo test` → `cargo clippy --all-targets -- -D warnings`

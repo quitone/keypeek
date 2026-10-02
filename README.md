@@ -206,7 +206,7 @@ A：不可以。Keypeek 是只读工具，请直接编辑 YAML 文件。
 
 ## 🧱 依赖与维护状态
 
-面向维护者：这里是「为什么选它、坏了往哪退、什么时候真正引入」的单一记录处。选型依据见 `tech-plan.md` ADR-005 / ADR-008，分层禁令见 §2.2。
+面向维护者：这里是「为什么选它、坏了往哪退、什么时候真正引入」的单一记录处。选型依据见 `tech-plan.md` ADR-005 / ADR-008，分层禁令见 §2.2，CI 的三处取舍（不用 sccache、矩阵只留 Windows、audit 归 S1）见 ADR-011。
 
 ### 已引入（Sprint 0）
 
@@ -230,6 +230,7 @@ A：不可以。Keypeek 是只读工具，请直接编辑 YAML 文件。
 ### 版本与可复现约定
 
 - `Cargo.lock` 必须提交，CI 全程 `--locked`；上表的 caret 版本只是「允许 `cargo update` 修 CVE」的通道，不是自动升级许可。
+- CI 编译缓存用 `actions/cache` 缓存 cargo 目录，**不用 sccache**：当前依赖图只有个位数 crate，`Compile hits` 天然可能为 0，拿它当验收会出现「流水线正常但验收失败」。S3 引入 fltk 后若瓶颈转移到 CMake 侧再评估（sccache 对它无效），顺序仍是先改 tech-plan §11.1 再动 workflow —— 依据见 ADR-011。
 - `noyalib` 属 0.0.x：每次 `cargo update` 前跑 `cargo update --dry-run -p noyalib` 看目标版本，升级后必须重跑 `scripts/verify-s0-2.sh` 与 `tests/dependency_smoke.rs`（后者固化了 ADR-008 的实测语义）。
 - MSRV：`Cargo.toml` 的 `rust-version = "1.86"`（由 `noyalib` 要求）。`rust-toolchain.toml` 保持浮动 `stable`——写死具体版本号会让 rustup 下载版本化通道，实测阻塞构建 10 分钟以上。
 - 已归档的 `serde_yaml` / `serde_yml` 由门禁脚本禁止回流。

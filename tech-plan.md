@@ -459,7 +459,9 @@ Window (resizable)
 
 ### 11.1 CI 流水线
 
-`.github/workflows/ci.yml`（S0-4 落地）。原方案表把缓存写成 `sccache`，实测后改为 **`actions/cache` 目录缓存**（钉到 commit SHA）：当前依赖图只有个位数 crate，sccache 的 `Compile hits` 天然可能为 0，用它当验收指标会出现「流水线正常但验收失败」；且 S3 引入 fltk 后真正的构建瓶颈在 CMake 侧，sccache 对它无效。
+`.github/workflows/ci.yml`（S0-4 落地）。本节与原方案表的三处差异（缓存机制、矩阵只留 Windows、audit 归 S1）由 **ADR-011** 记录决策与回退条件。
+
+原方案表把缓存写成 `sccache`，实测后改为 **`actions/cache` 目录缓存**（钉到 commit SHA）：当前依赖图只有个位数 crate，sccache 的 `Compile hits` 天然可能为 0，用它当验收指标会出现「流水线正常但验收失败」；且 S3 引入 fltk 后真正的构建瓶颈在 CMake 侧，sccache 对它无效。
 
 | 阶段 | 内容 |
 |---|---|
@@ -653,6 +655,21 @@ CI 集成契约（S0-4 已落地）：check 阶段以独立 step 依次跑 `bash
 **背景**：F-60 要求「切换即时生效」。
 **决策**：直接换 palette + 全窗口重绘。
 **影响**：切换是瞬变的，无渐变。符合「即时生效」的字面要求，且省去 FLTK 上自建动画循环的复杂度。
+
+---
+
+### ADR-011：CI 缓存机制、矩阵轴与供应链检查归属依实测收敛
+**状态**：已接受（2026-10-02，依 S0-4 的真实 run 结论追记）
+**背景**：这条决策的源头是 **PRD N-03「构建缓存：Rust 使用 `sccache` + Cargo 缓存」**，它把手段写进了需求表；§11.1 原表照抄成「check + build（Linux + Windows 矩阵，sccache）」，且没有给供应链检查留位置。S0-4 落地时逐条实测，三处与原文不符：当前依赖图只有个位数 crate，sccache 的 `Compile hits` 天然可能为 0；Linux 那一轴与 check 的 `cargo build --locked` 是同一件事做两遍；`cargo audit` 依赖工具安装与 RUSTSEC 公告库缓存，属另一类风险，而契约里当时没有一个字描述它。
+
+**决策**：
+1. **缓存改用 `actions/cache` 目录缓存**（`~/.cargo/registry/{cache,index,src}` 与 `~/.cargo/git/db`，action 钉到 40 位 commit SHA），不用 sccache。验收改成两级指标（§11.1）：① 同 key 再次运行出现 `Cache hit`；② 只有将来真的引入 sccache 才要求 `Compile hits > 0`。缓存 key 的编译器版本显式取 `rustc -vV` 的 `release:` 行，不用 `hashFiles('rust-toolchain.toml')`——后者内容恒为 `channel = "stable"`，编译器升级了哈希也不变，提供不了它声称的保护。
+2. **`build` 矩阵当前只有 `windows-2022` 一个轴**，Linux 产物由 check job 覆盖。
+3. **`cargo audit` 与 dependabot 移出 S0，归 S1**，并且启用前必须先回改 §11.1 表格——不让 job 跑在契约前面。这是「文档即契约」在 CI 上的一次具体应用：先改契约，再开工。
+
+**备选**：保留 sccache（会出现「流水线正常但验收失败」的假缺陷）；`Swatinem/rust-cache` 之类聚合 action（多一个第三方信任面，还会缓存 `target/` 造成膨胀，收益在个位数依赖下不可见）；矩阵保留 Linux 轴（纯重复编译，S3 引入 fltk 后成本显著上升）；本轮直接启用 audit（契约里没有它，等于门禁偷偷扩权）。
+
+**影响**：§11.1 的阶段表与两级缓存指标就是本决策的落地形态，由 `scripts/verify-s0-4.sh` 看护——R4（action 钉 SHA）、R8（显式 Windows 标签且全仓无 `latest`）、R9（缓存 key 双要素）。**本决策满足 N-03 的意图（构建要复用缓存、CI 要快），不满足它的字面（`sccache`）**；N-03 属需求文档，措辞是否改为「Cargo 目录缓存，sccache 视依赖规模再评估」由使用者定夺，本轮不代拟。S3 引入 fltk 时需重估：Windows 要 `cmake`/`ninja`，瓶颈转移到 CMake 侧而 sccache 对它无效；届时若目录缓存不够用，重新引入编译级缓存是本决策**允许的回退方向**，但顺序不变——先改 §11.1。已实测的证据：主干 run `36983307319` 三个 job 全绿，同 commit 复跑与之后的不同 commit 均命中主键 `cargo-Linux-1.98.1-a9cf6559…` / `cargo-Windows-1.98.1-8d6560ea…`（key 里的 `1.98.1` 即 `release:` 行）。
 
 ---
 

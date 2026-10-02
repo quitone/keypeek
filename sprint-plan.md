@@ -103,9 +103,10 @@
 **实际落地与偏差**（2026-10-02，S0-4a 与 S0-4b 均已交付）：
 
 - 交付物：`.github/workflows/ci.yml`（`check` ubuntu-24.04 + `build` windows-2022 + `ci-required` 汇总）、`scripts/verify-s0-4.sh`（14 组契约断言 + `--self-test` 35 项）。check job 依次跑 fmt → build → clippy → test → 分层 scan → 分层 self-test → `verify-s0-2.sh` → `verify-s0-4.sh`；本地与 CI 共用同一批命令，避免「CI 绿但本地门禁没人跑」。
-- **Linux 构建去重**：原描述"Linux + Windows 矩阵"里 Linux 那一轴与 check 的 `cargo build` 完全重复，故 Linux 产物由 check 覆盖、矩阵只留 Windows（S3 加 fltk 后重复成本会显著上升，届时再评估）。
-- **缓存改用 `actions/cache` 目录缓存，不用 sccache**：当前依赖图太小，`Compile hits` 天然可能为 0，拿它当验收会出现"流水线正常但验收失败"。验收改为两级指标（详见 tech-plan §11.1）。
-- **`sccache` 与 `hashFiles('rust-toolchain.toml')` 两处原方案均已更正**：后者内容恒定、给不出它声称的编译器版本保护，缓存 key 显式取 `rustc -vV` 的 `release:` 行。AGENTS.md 同步。
+- **三处偏差已升格为 ADR-011**（2026-10-02 追记）：缓存方式（sccache → `actions/cache` 目录缓存）、矩阵轴（Linux 由 check 覆盖，只留 Windows）、供应链检查归属（audit / dependabot → S1）连同备选与回退条件一起记进 tech-plan §14 ADR-011，避免后人把它们当成随手改文档。
+- **Linux 构建去重**：原描述「Linux + Windows 矩阵」里 Linux 那一轴与 check 的 `cargo build` 完全重复，故 Linux 产物由 check 覆盖、矩阵只留 Windows（S3 加 fltk 后重复成本会显著上升，届时再评估）。
+- **缓存改用 `actions/cache` 目录缓存，不用 sccache**：当前依赖图太小，`Compile hits` 天然可能为 0，拿它当验收会出现「流水线正常但验收失败」。验收改为两级指标（详见 tech-plan §11.1）。
+- **`sccache` 与 `hashFiles('rust-toolchain.toml')` 两处原方案均已更正（理由见 ADR-011）**：后者内容恒定、给不出它声称的编译器版本保护，缓存 key 显式取 `rustc -vV` 的 `release:` 行。AGENTS.md 同步。
 - **本轮明确不做**：`cargo audit`、dependabot（移交 S1，启用前须先改 tech-plan §11.1，不让 job 跑在契约前面）；size-guard（S5-4）；产物上传（S5）。
 - **触发分支实测修正**：首次 push 后无任何 run——仓库默认分支是 `master`，而 workflow 原写 `branches: [main]`。现改为 `[master, main]`，并由 `verify-s0-4.sh` 的 R2 拆成三条断言（pull_request / 含 master / 含 main）长期看护，防止将来改名主干分支时主干推送静默不触发。
 - 验收条款的可证伪状态：三条**全部有真实证据**，见下方 S0-4b。此前第 1、2 条一直是 not-run（缺 remote），本轮补齐；未把「配置已写好」当作「验收已通过」。
@@ -133,10 +134,11 @@
 **交接清单**：
 - **给 S0-3 的收口**：A5 已收口（见 S0-4b 第 4 步），不再是 not-run
 - **给 S1**：`cargo audit`（本机已装 `cargo-audit`；CI 侧需自带安装 + RUSTSEC 公告库缓存，且必须先增补 tech-plan §11.1 表格）、dependabot（actions 与 cargo 分开设，cargo 侧不得跨 minor 自动 bump，与 `noyalib` caret 策略对齐）、`ci-required` 是否会因矩阵改名而失效的复验
+- **给使用者定夺（不属于任何任务，但别忘了）**：PRD **N-03** 字面写「Rust 使用 `sccache` + Cargo 缓存」，与 ADR-011 的实测取舍（改用 `actions/cache` 目录缓存）冲突——意图满足、手段不满足。要不要把 N-03 改写成「构建复用缓存；编译级缓存在依赖规模变大后再评估」由你决定，我没有代拟需求文档
 - **给 S3**：引入 fltk 后 Windows 需 `cmake`/`ninja`，Linux 若跑 GUI 相关测试需 display（sccache 对 CMake 构建无效）；届时 `check`/`build` 的重复编译成本上升，需重新评估是否把 clippy/test 只留单平台
 - **给 S5**：size-guard 与产物上传/发布链路；发布通道属 S5，不预埋
 
-**对应方案**：§11.1、§11.2
+**对应方案**：§11.1、§11.2、ADR-011
 
 ---
 

@@ -51,7 +51,7 @@
 
 | 层 | 允许依赖 | 禁止依赖 |
 |---|---|---|
-| domain | 标准库、纯数据 crate（serde derive、indexmap） | fltk、std::fs、dirs |
+| domain | 标准库、纯数据 crate（serde derive、indexmap）、noyalib（仅 `Value` 等纯数据类型） | fltk、std::fs、dirs |
 | app | domain、纯数据结构 | fltk、std::fs、noyalib |
 | infra | domain、noyalib、image、resvg、dirs、std::fs | fltk |
 | ui | app（只发 Msg）、fltk | std::fs、noyalib、dirs |
@@ -60,7 +60,7 @@ CI 中用脚本 grep 强制，任何越界依赖阻塞合并。
 
 > **ADR-008 落地后的改名**：本项目不使用已归档的 `serde_yaml`，YAML 能力由 `noyalib` 提供，因此上表的禁令项从 `serde_yaml` 改为 `noyalib`。grep 模式必须同时覆盖兼容 shim 路径 `noyalib::compat::serde_yaml`（写 `use serde_yaml` 反而不会命中，因为该 crate 不在依赖树里）。
 >
-> **待 S1 收敛的既有歧义**：`domain::parse`（任务 S1-9）需要 YAML `Value` 类型，但 §2.2 的 domain 允许列只写了「标准库、纯数据 crate」。`noyalib::Value` 是纯数据（无 IO），按 §3.2 的有序字段要求它是必要输入；这一条要么写进 domain 允许列，要么改成「infra 解析成中间 Value 树再交给 domain」。两种写法对 S1-9 的实现位置影响不同，须在 S1 开工前定案，不能靠 grep 脚本碰运气。
+> **歧义已于 S0-3 定案（2026-10-01）**：domain 允许列写入 `noyalib` 的纯数据类型，即采用「infra 读到文本、`domain::parse` 直接持有 `noyalib::Value`」这一种写法，S1-9 的代码落点据此确定。理由：`noyalib::Value` 无 IO，且 §3.2 的有序字段依赖它的 `Mapping`（`IndexMap`，S0-2 实测已证）；另一种写法（infra 解析成中间 Value 树）会把 YAML 语义复制到两层。`scripts/check-layering.sh --self-test` 有用例钉住「domain 里 `use noyalib` 放行」，收紧须同时改本表、脚本 `rules` 与 `expected_rule_pairs`。
 
 ### 2.3 目录结构
 

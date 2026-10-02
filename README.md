@@ -213,7 +213,7 @@ A：不可以。Keypeek 是只读工具，请直接编辑 YAML 文件。
 | crate | 钉定版本 | 用途 | 允许所在层 | 维护状态（核实日期） | 已知风险 | 退路 |
 |---|---|---|---|---|---|---|
 | `serde` | `1`（derive） | 反序列化派生 | domain / infra | 活跃，生态基座 | 无 | 无（不可替） |
-| `noyalib` | `0.0.51` + `compat-serde-yaml` | YAML 解析（替代已归档的 `serde_yaml`） | infra（domain 归属待 S1 定案，见 ADR-008） | **0.0.x 预发布**，单人维护（核实 2026-10-01） | 与上游 serde_yaml 0.9 存在布尔/合并键等行为差异；`0.0.*` 内可随时破坏兼容 | `domain::parse` 只依赖通用 `Value`，替换成本限于一个文件 |
+| `noyalib` | `0.0.51` + `compat-serde-yaml` | YAML 解析（替代已归档的 `serde_yaml`） | infra / domain（S0-3 定案：`Value` 等纯数据类型可进 domain） | **0.0.x 预发布**，单人维护（核实 2026-10-01） | 与上游 serde_yaml 0.9 存在布尔/合并键等行为差异；`0.0.*` 内可随时破坏兼容 | `domain::parse` 只依赖通用 `Value`，替换成本限于一个文件 |
 | `dirs` | `6` | 配置目录定位 | infra | 活跃 | Win/Linux 路径差异 | 自实现 `std::env` 分支 |
 | `pretty_assertions` | `1`（dev） | 断言差异可读 | tests | 活跃 | 无 | 去掉依赖即可 |
 
@@ -233,6 +233,9 @@ A：不可以。Keypeek 是只读工具，请直接编辑 YAML 文件。
 - `noyalib` 属 0.0.x：每次 `cargo update` 前跑 `cargo update --dry-run -p noyalib` 看目标版本，升级后必须重跑 `scripts/verify-s0-2.sh` 与 `tests/dependency_smoke.rs`（后者固化了 ADR-008 的实测语义）。
 - MSRV：`Cargo.toml` 的 `rust-version = "1.86"`（由 `noyalib` 要求）。`rust-toolchain.toml` 保持浮动 `stable`——写死具体版本号会让 rustup 下载版本化通道，实测阻塞构建 10 分钟以上。
 - 已归档的 `serde_yaml` / `serde_yml` 由门禁脚本禁止回流。
+- 分层禁令由 `scripts/check-layering.sh` 强制（四层全覆盖：import、完整限定路径、花括号多段三类命中形态；先剥注释再匹配，`main.rs`/`tests/` 不判定）。
+  rustfmt 会把超长的 `use` 树拆成多行，所以除逐行匹配外还有一遍「压平匹配」；层目录缺失、层内无 `.rs` 文件、检查器自身执行失败都退出非 0。
+  门禁自身的可失败性由 `bash scripts/check-layering.sh --self-test` 看护（152 项断言，约 30 s，fixture 建在临时目录，不改工作树；另有 16 个针对脚本自身的变异体全部被抓到）。真实仓库扫描本身 < 1 s。
 - 当前依赖树规模：`cargo tree --locked` 共 35 个包（`cargo tree -d` 无重复版本，由门禁断言看护）。
 
 ---

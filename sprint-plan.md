@@ -64,19 +64,30 @@
 **实际落地与偏差**（2026-10-01）：YAML 选型为 `noyalib 0.0.51` + `compat-serde-yaml`（非 fork，是独立实现 + 兼容层，见 ADR-008 实测行为表）；新增 `rust-version = "1.86"`、`scripts/verify-s0-2.sh`（可失败断言版）与 `tests/dependency_smoke.rs`。
 
 **交接清单**：
-- **给 S0-3**：分层 grep 的禁止模式应为 `noyalib` 与 `noyalib::compat::serde_yaml`（写 `serde_yaml` 不会命中，该 crate 不在依赖树里）；domain 是否允许直接依赖 `noyalib::Value` 需先定案（tech-plan §2.2 已标注歧义）
+- **给 S0-3**：分层 grep 的禁止模式应为 `noyalib` 与 `noyalib::compat::serde_yaml`（写 `serde_yaml` 不会命中，该 crate 不在依赖树里）；domain 是否允许直接依赖 `noyalib::Value` 需先定案（tech-plan §2.2 已标注歧义）→ **已于 S0-3 定案：放行，见 §2.2 注记**
 - **给 S0-4**：`cargo audit` 未进本地门禁脚本（tech-plan §11.1 无此阶段，且它依赖机器全局二进制与本地公告库路径）；若要在 CI 启用，由 CI 负责安装与公告库缓存，本机缺工具时按 not-run 记账；CI 缓存 key 需含 `rust-toolchain.toml` + `Cargo.lock`
 
 **对应方案**：ADR-008、N-04
 
 ---
 
-### [ ] 任务 S0-3：分层依赖检查脚本
-**描述**：写 `scripts/check-layering.sh`，对 `src/domain`、`src/ui`、`src/infra` 分别 grep 禁止的 `use` 模式（§2.2 表）。
-**验收标准**：
-- 脚本对当前空骨架返回成功
-- 故意在 `domain` 里加 `use fltk::*;` 时脚本失败
-- 脚本退出码非 0 时 CI 阻塞
+### [x] 任务 S0-3：分层依赖检查脚本
+**描述**：写 `scripts/check-layering.sh`，按 §2.2 禁令表对 `domain`/`app`/`infra`/`ui` **四层**grep 禁止依赖，命中形态覆盖 import、完整限定路径、花括号多段三类（§11.2）。
+
+**验收标准**（2026-10-01 实测）：
+- [x] A1 脚本对当前空骨架返回成功 → `bash scripts/check-layering.sh` exit 0
+- [x] A2 故意在 `domain` 里加 `use fltk::*;` 时脚本失败 → exit 1，输出 `[violation] domain 禁止 fltk  src/domain/mod.rs:4:use fltk::*;`（路径相对仓库根、带行号），还原后 `git status` 干净
+- [x] A3 门禁可证伪：`--self-test` **152 项断言**全通过（临时目录 fixture，不碰工作树）；**16 个变异体全部被自测抓到，0 存活**（删规则 / 删形态样例 / 压平遍整体失效 / awk 块注释状态机失效 / 把 grep rc=2 当干净 / 去掉缺目录检查 / 去掉空层检查 / 首个命中即停 / 只扫层根目录 / 裸 `*` 续行当注释 / 行命中后重复计数 / 压平正则丢花括号分支 / 逐行正则丢限定路径分支 / 逐行正则丢 import 分支 / 两遍同时丢限定路径分支 ×2）；其中「删规则仍自测通过」「样例基准取自样例列表自身」「逐行遍退化靠压平遍兜住而存活」三处漏洞是变异测试发现后补的（第三处补的断言是：单行样例必须报出 `文件:行号`）
+- [x] A4 头注释不自炸：`src/*/mod.rs:2` 列举禁用名的注释行不产生误报（自测负例长期看护）
+- [x] A4b rustfmt 拆行的跨行 `use` 树必须被拦：压平遍失效的变异体（V3）与新加的 4 个拆行样例（C3）双向看护；此前「fmt 会把 use 树留在同一行」的假设已被实测推翻
+- [ ] A5 脚本退出码非 0 时 CI 阻塞 → **本轮 not-run**，CI 在 S0-4；已交付集成契约（§11.2 末）
+
+**实际落地与偏差**：S0-2 交接的「domain 能否依赖 `noyalib::Value`」歧义**已在任务内定案为放行**（否则脚本要碰运气），据此 §2.2 domain 允许列写入 noyalib 纯数据类型、S1-9 代码落点为「infra 读文本、domain 持有 `noyalib::Value`」；§11.2 原写「domain / ui / infra 三个目录」漏了 app（app 是唯一带 noyalib 禁令的编排层），已改为四层并同步本任务描述。
+
+**交接清单**：
+- **给 S0-4**：check 阶段以独立 step 跑 `bash scripts/check-layering.sh` 与 `... --self-test`（后者含「真实仓库必须干净」这一项，单独跑前者会漏掉门禁自身的腐烂）；分层检查依赖 GNU grep，只能放 ubuntu job；本机实测真实仓库扫描 < 1 s、`--self-test` 约 30 s，后者不计入 build 矩阵缓存
+- **给 S1**：脚本**不判定**的方向性挂载问题——① `use crate::<上层>::…`（禁令表只表达外部 crate，内部层级顺序靠人审）；② `#[path = "…"]` / `include!` 可把模块挂在扫描根之外从而绕过四层枚举。S1 若要收口，①需要新增一张「层 → 允许引用的 crate 内前缀」表，②需要一条「src 内出现 `#[path]`/`include!` 即失败」的规则；两者都超出 S0-3 范围，本轮只把它写进 §11.2 的已知缺口清单，不偷偷扩权
+- **给 S1**：§2.2 的 app 禁止列目前不含 `dirs`（app 层可用 `dirs::config_dir()`），与 ui 禁 dirs 不对称。这是文档现状而非脚本 bug（脚本逐字 mirror 文档），要不要收紧由 S1 定
 
 **对应方案**：§2.2、§11.2
 

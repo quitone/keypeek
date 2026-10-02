@@ -33,7 +33,11 @@ if grep -Eq '^(serde_yaml|serde_yml) =' Cargo.toml; then
     exit 1
 fi
 
-# YAML 能力必须真的被引用，否则构建通过也证明不了 API 可用
-grep -rq 'noyalib' src tests
+# YAML 能力必须真的被 import，否则构建通过也证明不了 API 可用。
+# 只 grep 'noyalib' 会被 src/*/mod.rs 的头注释满足（注释里在列举禁用名），那是假绿。
+if ! grep -rqE '^[[:space:]]*(pub[[:space:]]*)?use[[:space:]]+noyalib' src tests; then
+    echo "noyalib 未被任何 import 行引用（注释不算）"
+    exit 1
+fi
 
 echo "S0-2 verification passed"

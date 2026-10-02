@@ -12,11 +12,11 @@ Keypeek（键览）：跨平台只读快捷键浏览桌面工具（Rust + fltk-r
 
 依赖方向只允许自上而下：`main（组合根） → ui / infra → app（状态机） → domain（纯逻辑）`。
 
-每层有硬性依赖禁令（见 `src/*/mod.rs` 头注释，tech-plan §2.2 / §11.2 计划 CI grep 强制，越界阻塞合并）：
+每层有硬性依赖禁令（见 `src/*/mod.rs` 头注释，tech-plan §2.2 / §11.2，由 `scripts/check-layering.sh` 在 CI 强制，越界阻塞合并）：
 
 | 层 | 禁止依赖 |
 |---|---|
-| domain | fltk、std::fs、dirs |
+| domain | fltk、std::fs、dirs（`noyalib::Value` 属允许列，S0-3 定案） |
 | app | fltk、std::fs、noyalib |
 | infra | fltk |
 | ui | std::fs、noyalib、dirs |

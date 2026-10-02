@@ -459,15 +459,42 @@ Window (resizable)
 
 ### 11.1 CI 流水线
 
+`.github/workflows/ci.yml`（S0-4 落地）。原方案表把缓存写成 `sccache`，实测后改为 **`actions/cache` 目录缓存**（钉到 commit SHA）：当前依赖图只有个位数 crate，sccache 的 `Compile hits` 天然可能为 0，用它当验收指标会出现「流水线正常但验收失败」；且 S3 引入 fltk 后真正的构建瓶颈在 CMake 侧，sccache 对它无效。
+
 | 阶段 | 内容 |
 |---|---|
-| check | 格式检查、Clippy（警告即错误）、依赖分层检查脚本、单元测试 |
-| build | Linux + Windows 矩阵，sccache 缓存，`--locked` |
-| size-guard | 断言产物 < 15 MB，超限告警（不阻塞） |
+| check | `cargo fmt --check` → `cargo build --locked` → `cargo clippy --all-targets --locked -- -D warnings` → `cargo test --locked` → `check-layering.sh` → `check-layering.sh --self-test` → `verify-s0-2.sh` → `verify-s0-4.sh`（Linux 产物在此覆盖，不进 build 矩阵，避免重复编译） |
+| build | `cargo build --locked`，矩阵轴**当前只有 `windows-2022`**（显式镜像标签，禁用 `*-latest`），`fail-fast: false`，`shell: bash` |
+| ci-required | 汇总 job：`needs: [check, build]` + `if: always()`；分支保护只把它设为 required check，矩阵轴增减不需要改仓库设置。上游被并发取消（同 PR 有新推送）不表态、直接放行给新 run |
+| size-guard | 断言产物 < 15 MB，超限告警（不阻塞）——**属 S5-4，S0-4 不预埋** |
+
+**缓存 key 的真实构成**：`cargo-${runner.os}-${steps.toolchain.outputs.release}-${hashFiles('Cargo.lock')}`。其中编译器版本必须显式取 `rustc -vV` 的 `release:` 行——`hashFiles('rust-toolchain.toml')` 提供不了它声称的保护（该文件内容恒为 `channel = "stable"`，编译器版本变了哈希也不变）。缓存错配只会浪费编译时间、不会产生错误产物（cargo 自身指纹含编译器哈希），所以这是性能问题而非正确性问题。
+
+**缓存验收的两级指标**（避免把「配了缓存」当成「命中了缓存」）：① 同 commit 二次运行时缓存层日志出现 `Cache hit`；② 若将来引入 sccache，则要求 `sccache --show-stats` 的 `Compile hits > 0`，为 0 时记为「依赖图过小、预期无收益」，不记为缺陷。
+
+**流水线自身契约的可证伪性**：`scripts/verify-s0-4.sh` 对 workflow 做 14 条语义断言（结构、PR 触发、最小权限、action 钉 SHA、分层两个 step 齐全且只在 ubuntu、`--locked` 全覆盖、显式 Windows 标签且全仓无 `latest`、缓存 key 双要素、无后台 `&`、无服务器/守护/`|| true`、无 `continue-on-error`、汇总 job 契约、本地 parity），`--self-test` 用独立 canonical fixture 跑 **33 项断言**：26 个变异体必须各自以对应规则号变红（防止「因错误的原因变红」）、合法诱饵样例（`&&`、注释里的 `&`、`>&2` 重定向、`${{ }}`、YAML 锚点）必须保持全绿、结构缺失必须 fail-closed。YAML schema 合法性由 `actionlint` 负责，本机未安装时打 `[not-run]` 记账，不静默通过。
+
+**本轮明确不做**（各自有归属）：`cargo audit` 与 dependabot 移交 S1（启用 audit 必须先改本节表格，不让 job 跑在契约前面）；产物上传与发布链路属 S5。人设模板里的云侧交付物（Terraform / K8s / 蓝绿部署 / Prometheus / MTTR / 可用性 SLA）对一个离线桌面工具的 CI 不适用，本节无部署与监控阶段。
 
 ### 11.2 依赖规则检查
 
-CI 中运行脚本，对 domain / ui / infra 三个目录分别 grep 禁止的 `use` 模式。任何越界阻塞合并。
+CI 中运行 `scripts/check-layering.sh`，对 §2.2 禁令表逐条 grep。**四层全覆盖**（`domain` / `app` / `infra` / `ui`），任何越界阻塞合并。
+
+- **两遍匹配，一份文本**：先用 awk 状态机剥掉注释（**保留行号**，违规能定位到 `文件:行号`），逐行遍与压平遍读的是同一份去注释文本。压平遍把整文件压成一行再匹配——`cargo fmt` 会把超长的 `use` 树拆成多行，实测拆行后的 `fs` 独占一行，**纯逐行 grep 存在可达假阴性**（fmt --check 与门禁同时绿灯），必须有这一遍。
+- **命中形态三类**：① import（`use` / `pub use` / `pub(crate) use` / `extern crate`，含 `as` 别名定义行）；② 完整限定路径（`token::…`、`::token::…`，覆盖无 import 的 `std::fs::read(...)` 写法）；③ 花括号多段（`use std::{fs, io}`，同行由逐行遍覆盖，被 rustfmt 拆行后由压平遍覆盖）。只查 `use` 会被限定路径绕过，而本项目实际代码风格（`tests/dependency_smoke.rs`）正是别名 + 路径调用。
+- **同一 (文件, token) 只计一次**：行命中即返回，不再走压平遍，避免重复计数。
+- **必须失败**：层目录缺失（骨架被删）、**层内没有任何 `.rs` 文件**（删空一层等于关掉门禁）、检查器自身执行失败（grep / bash 正则非 0/1 返回码，含压平遍）都退出非 0，绝不把「工具没跑成」当成「干净」。
+- **不判定范围（已知缺口，按风险排序）**：
+  - `src/main.rs`（组合根，合法依赖 fltk + dirs + std::fs）与 `tests/**`（集成测试需摸真实文件系统）不扫。
+  - `#[path = "…"]` / `include!` 可从扫描根之外挂进模块树，门禁看不见该文件；S1 起约定不使用这两个属性，用了就必须手工复核。
+  - `use crate::<上层>::…` 的**方向性**违规不受检（禁令表表达的是外部 crate，不是内部层级顺序），靠 code review。
+  - 字符串字面量里的 `//` 或 `/*`（如 `"https://…"`）会被当注释截断，后果是**少报不会多报**；Rust 代码中出现裸 `* ` 开头的续行而没有配对 `/*` 时按代码处理（宁可误报不漏报）。
+  - 标识符边界依赖 GNU grep 的 `\b`；bash `=~` 的 POSIX ERE 无 `\b`，压平遍用显式字符类另写一条规则，两条由 self-test 的形态样例分别钉住。
+- **可证伪性**：`scripts/check-layering.sh --self-test` 在 `mktemp -d` 的临时树里跑 **152 项断言**（不改工作树），包含：禁令表与 §2.2 展开一致、每条 (层, token) 规则与每种形态都有能触发失败的样例（且单行样例必须报出行号）、合法写法与各类注释不误报、跨行 `use` 树必须被拦、一次报出全部违规而非首个即停、缺目录 / 空层 / 工具失败三种破坏形态必须变红。规则集与样例数另有独立字面基准（`expected_rule_pairs` / `expected_form_count_for`），删规则或删样例都会被抓到。
+- **变异测试结论**：对门禁脚本自身注入 16 个变异体（删规则、删样例、压平遍失效、注释状态机失效、把工具失败当干净、删空层检查、首个命中即停、只扫根目录、重复计数、各类正则分支退化），**16/16 被 self-test 抓到，0 存活**。其中「逐行遍丢掉限定路径分支」在早期版本曾存活（压平遍兜底），补上「单行样例必须报行号」断言后亦被抓到。
+- **运行环境**：依赖 GNU grep 的 `\b`，仅在 check（ubuntu）阶段执行；本机实测：真实仓库扫描 < 1 s，单次 `--self-test` 约 30 s。
+
+CI 集成契约（S0-4 已落地）：check 阶段以独立 step 依次跑 `bash scripts/check-layering.sh` 与 `bash scripts/check-layering.sh --self-test`，任一非 0 即失败；两个 step 之间不合并，否则「真实仓库脏」与「门禁自身腐烂」两类失败在日志里无法区分。这两条 step 的存在性本身由 `scripts/verify-s0-4.sh` 的 R5 断言看护（删掉 `--self-test` step 会让 CI 契约门禁变红）。
 
 ### 11.3 跨平台差异
 

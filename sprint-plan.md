@@ -17,7 +17,7 @@
 - Rust（edition 2021+）、fltk-rs 自绘
 - 依赖：serde / noyalib（`serde_yaml` 兼容层，ADR-008）/ image / resvg / dirs
 - 分层：`domain`（纯逻辑）→ `app`（状态机）→ `infra`（IO）/ `ui`（fltk）
-- CI：格式 + Clippy 严格 + 分层 grep 脚本 + Linux/Win 构建矩阵 + size-guard
+- CI：格式 + Clippy 严格 + 分层 grep 脚本 + Windows 构建轴（Linux 由 check 覆盖）+ 目录缓存 + `ci-required` 汇总门禁；size-guard 属 S5
 
 **目标时间线**：约 9–10 周，6 个 Sprint（含 Sprint 0 脚手架）
 
@@ -100,7 +100,29 @@
 - 缓存命中 sccache
 - 无 `&` 后台进程、无启动服务器命令
 
-**对应方案**：§11.1
+**实际落地与偏差**（2026-10-02，S0-4a 已交付 / S0-4b 待执行）：
+
+- 交付物：`.github/workflows/ci.yml`（`check` ubuntu-24.04 + `build` windows-2022 + `ci-required` 汇总）、`scripts/verify-s0-4.sh`（14 条契约断言 + `--self-test` 33 项）。check job 依次跑 fmt → build → clippy → test → 分层 scan → 分层 self-test → `verify-s0-2.sh` → `verify-s0-4.sh`；本地与 CI 共用同一批命令，避免「CI 绿但本地门禁没人跑」。
+- **Linux 构建去重**：原描述"Linux + Windows 矩阵"里 Linux 那一轴与 check 的 `cargo build` 完全重复，故 Linux 产物由 check 覆盖、矩阵只留 Windows（S3 加 fltk 后重复成本会显著上升，届时再评估）。
+- **缓存改用 `actions/cache` 目录缓存，不用 sccache**：当前依赖图太小，`Compile hits` 天然可能为 0，拿它当验收会出现"流水线正常但验收失败"。验收改为两级指标（详见 tech-plan §11.1）。
+- **`sccache` 与 `hashFiles('rust-toolchain.toml')` 两处原方案均已更正**：后者内容恒定、给不出它声称的编译器版本保护，缓存 key 显式取 `rustc -vV` 的 `release:` 行。AGENTS.md 同步。
+- **本轮明确不做**：`cargo audit`、dependabot（移交 S1，启用前须先改 tech-plan §11.1，不让 job 跑在契约前面）；size-guard（S5-4）；产物上传（S5）。
+- 验收条款的可证伪状态：第 3 条（无 `&` 后台 / 无服务器命令）**已本地证明**，由 `verify-s0-4.sh` 的 R10/R11 断言 + 诱饵样例双向看护；第 1、2 条 **not-run**——需要真实 GitHub remote，见下方 S0-4b。三条中只有 not-run 的两项未闭环，不以「配置已写好」充当「验收已通过」。
+
+**S0-4b（需授权后执行，尚未做）**：
+1. 建 remote 并 push（对外可见动作，已获本轮授权，待执行时再确认仓库可见性）
+2. 设分支保护：required check = `ci-required`
+3. 同 commit 复跑取缓存命中证据（`Cache hit` 日志）
+4. **故意红一次**：提一个在 `domain` 加 `use fltk::*;` 的 PR，验证分层门禁真的阻塞合并（S0-3 遗留的 A5 项一并收口）
+5. 回填第 1、2 条验收与运行日志摘录
+
+**交接清单**：
+- **给 S0-3 的收口**：A5（脚本退出码非 0 时 CI 阻塞）由 S0-4b 第 4 步的「故意红 PR」补齐证据，此前一直是 not-run
+- **给 S1**：`cargo audit`（本机已装 `cargo-audit`；CI 侧需自带安装 + RUSTSEC 公告库缓存，且必须先增补 tech-plan §11.1 表格）、dependabot（actions 与 cargo 分开设，cargo 侧不得跨 minor 自动 bump，与 `noyalib` caret 策略对齐）、`ci-required` 是否会因矩阵改名而失效的复验
+- **给 S3**：引入 fltk 后 Windows 需 `cmake`/`ninja`，Linux 若跑 GUI 相关测试需 display（sccache 对 CMake 构建无效）；届时 `check`/`build` 的重复编译成本上升，需重新评估是否把 clippy/test 只留单平台
+- **给 S5**：size-guard 与产物上传/发布链路；发布通道属 S5，不预埋
+
+**对应方案**：§11.1、§11.2
 
 ---
 
@@ -805,8 +827,8 @@
 ## 质量要求
 
 - [ ] **分层依赖规则**：CI grep 脚本阻塞越界（§2.2）
-- [ ] **命令不含后台进程**：CI 脚本无 `&`；开发命令无 `&`
-- [ ] **不写启动服务器的命令**：本应用是桌面 GUI，无 dev server
+- [x] **命令不含后台进程**：CI 脚本无 `&`（`verify-s0-4.sh` R10/R11 断言，诱饵样例防 `&&` 误杀）；开发命令无 `&`
+- [x] **不写启动服务器的命令**：本应用是桌面 GUI，无 dev server；R11 禁止 `nohup` / `setsid` / `http.server` / `xvfb` / `python -m`
 - [ ] **键帽拆分 9 条用例 100% 通过**：CI 硬门禁
 - [ ] **domain 层全部可单测**：不依赖 FLTK 环境（§16 核心回报）
 - [ ] **UI 层只做数据搬运**：bug 风险压在纯函数层（§12.2）

@@ -1,0 +1,137 @@
+name: CI
+
+# 触发：PR 与 main 推送。workflow_dispatch 用于手动复跑（验证缓存命中）。
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 全仓无写需求；流水线不部署、不发布产物（tech-plan §11.1 无部署阶段）。
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # check：静态检查 + 测试 + 三道门禁。Linux 构建产物在此覆盖，不进 build 矩阵（避免重复编译）。
+  check:
+    name: check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Toolchain identity
+        id: toolchain
+        run: |
+          rustc -vV
+          echo "release=$(rustc -vV | sed -n 's/^release: //p')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo registry and git checkouts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/cache/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/src/
+            ~/.cargo/git/db/
+          key: cargo-${{ runner.os }}-${{ steps.toolchain.outputs.release }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ steps.toolchain.outputs.release }}-
+            cargo-${{ runner.os }}-
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Dependency layering gate
+        run: bash scripts/check-layering.sh
+
+      - name: Dependency layering gate self-test
+        run: bash scripts/check-layering.sh --self-test
+
+      - name: S0-2 dependency manifest gate
+        run: bash scripts/verify-s0-2.sh
+
+      - name: Workflow contract gate
+        run: bash scripts/verify-s0-4.sh
+
+  # build：跨平台可编译性。矩阵轴当前只有 Windows；S3 加 fltk 原生依赖时再扩轴，
+  # 届时 required check 名由 ci-required 汇总 job 固定住，分支保护不用改。
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-2022
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Toolchain identity
+        id: toolchain
+        run: |
+          rustc -vV
+          echo "release=$(rustc -vV | sed -n 's/^release: //p')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo registry and git checkouts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/cache/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/src/
+            ~/.cargo/git/db/
+          key: cargo-${{ runner.os }}-${{ steps.toolchain.outputs.release }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ steps.toolchain.outputs.release }}-
+            cargo-${{ runner.os }}-
+
+      - name: Build
+        run: cargo build --locked
+
+  # 分支保护只把这一个 check 名设为 required：矩阵轴变化不需要改仓库设置。
+  # 上游被并发取消（推送取代旧 run）不算失败，以新 run 为准。
+  ci-required:
+    name: ci-required
+    needs:
+      - check
+      - build
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Aggregate required results
+        env:
+          CHECK_RESULT: ${{ needs.check.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          echo "check=$CHECK_RESULT build=$BUILD_RESULT"
+          for result in "$CHECK_RESULT" "$BUILD_RESULT"; do
+            case "$result" in
+              success) ;;
+              cancelled)
+                echo "上游 job 被并发取消（同一 PR 有新推送），本 run 不表态"
+                exit 0
+                ;;
+              *)
+                echo "::error:: 必需 job 未成功：$result"
+                exit 1
+                ;;
+            esac
+          done

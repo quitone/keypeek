@@ -4,11 +4,18 @@ Keypeek（键览）：跨平台只读快捷键浏览桌面工具（Rust + fltk-r
 
 ## 文档即契约（动手前先读）
 
-- `specification-doc/prd.md` — 产品需求与数据模型（YAML 结构、字段规则、九条键帽用例）
-- `specification-doc/tech-plan.md` — 架构、ADR、CI 强制依赖规则
-- `specification-doc/sprint-plan.md` — 任务与验收标准
+**真源在 wiki，不在本仓库**（2026-10-02 迁出）：
 
-三份规划文档统一放在 `specification-doc/` 下并**保持版本控制跟踪**（它们是契约，不是本机草稿）。
+- [PRD](https://github.com/quitone/keypeek/wiki/PRD) — 产品需求与数据模型（YAML 结构、字段规则、九条键帽用例）
+- [Tech-Plan](https://github.com/quitone/keypeek/wiki/Tech-Plan) — 架构、ADR、CI 强制依赖规则
+- [Sprint-Plan](https://github.com/quitone/keypeek/wiki/Sprint-Plan) — 任务与验收标准
+- [Home](https://github.com/quitone/keypeek/wiki/Home) / [Traceability](https://github.com/quitone/keypeek/wiki/Traceability) — 导航页与需求追踪矩阵（这两页由 `gen.py` 从 Sprint-Plan 机械汇总生成，别手工改）
+
+本机 `specification-doc/*.md` 只是**工作副本**，已在 `.gitignore` 里，`git ls-files` 查不到它们。三种路径写法指的是同一份东西：wiki 页名 `PRD` / 工作副本 `specification-doc/prd.md` / `gen.py` 产物 `wiki/PRD.md`；历史文档与 issue 里出现的 `specification-doc/...` 一律按此理解。
+
+改文档的动作序：编辑工作副本 → `python3 /tmp/keypeek-github/gen.py <本仓库> /tmp/keypeek-github` 刷新草稿 → `REPO_DIR=<本仓库> FORCE=1 DRY_RUN=0 bash /tmp/keypeek-github/scripts/03-wiki.sh` 推 wiki（**只有确认本机较新时才加 FORCE**，否则 wiki 上的较新修订会被过期草稿吃掉）→ 必要时 `MODE=update` 同步 issue 正文。
+
+代价要认：wiki 侧编辑**没有 PR 评审**，CI 也不读这三份文档（`scripts/` 与 `.github/` 里没有任何引用）。回滚靠 wiki 仓库自身的历史：`git log -p Sprint-Plan.md`。
 
 ## 分层单体结构（tech-plan §2）
 

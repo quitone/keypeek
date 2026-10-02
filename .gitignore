@@ -1,2 +1,6 @@
 /target
 .opencode/
+
+# 规划文档真源在 wiki（见 AGENTS.md「文档即契约」），本仓库只留工作副本，不跟踪。
+# 加这一行本身不会取消已跟踪文件，必须配合 `git rm --cached specification-doc/*`。
+specification-doc/

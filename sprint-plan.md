@@ -114,11 +114,13 @@
 
 1. **建 remote 与首跑的教训**：首次 push 后**没有任何 run**——workflow 原写 `push: branches: [main]`，而默认分支是 `master`。改为 `[master, main]` 后主干推送才触发。这一类「静态检查看不见、只有实跑才暴露」的缺陷已固化进 `verify-s0-4.sh` 的 R2（拆成 pull_request / 含 master / 含 main 三条断言），self-test 随之从 33 项增至 **35 项**（新增两个主干分支变异体）。
 2. **主干全绿**：run [`36983307319`](https://github.com/quitone/keypeek/actions/runs/36983307319) —— `check` 与 `build (windows-2022)` 与 `ci-required` 全部 success，三个 job 的每一个 step 都是 success（check 15 step / build 8 step / 汇总 3 step，无一下降为 skipped 或 failure），check 内含分层 scan、分层 self-test 152 项、`verify-s0-2.sh`、`verify-s0-4.sh` 35 项。这是「Windows 独立编译通过 + 缓存未命中时全绿」两条验收的同一份证据。
+   修正后的主干触发另有一份独立复证：本文件之后的一次 docs-only push（commit `cb29de6`）确实产生了 run [`36985517329`](https://github.com/quitone/keypeek/actions/runs/36985517329)（`event=push`、`branch=master`）且三个 job 每一步全绿——第 1 步那个「静默不触发」的缺陷不会以原样回来。
 3. **缓存命中实证**：同一 commit `gh run rerun`（attempt 2）拿到主键命中，且 key 里带着编译器版本，证明 `hashFiles('rust-toolchain.toml')` 换成 `rustc -vV` 的 `release:` 行是对的：
    - `Cache hit for: cargo-Linux-1.98.1-a9cf65592a828f49c3538edadc54c1f1ddacec0b0bfc0097914cf7d5601c5447`
    - `Cache hit for: cargo-Windows-1.98.1-8d6560ea6f729bbf397403e985ca392e88f8b107ebc4a0d70e5762251ba71a65`
    - 两个平台各自的 Post step 均回 `Cache hit occurred on the primary key …, not saving cache.` —— 命中即不重写，符合预期。
    - 验收第 2 条的**第 ① 级（目录缓存命中）已证**；第 ② 级（依赖规模变大后的编译时间收益）在个位数依赖下无意义，留到 S3 引入 fltk 后测。
+   - 同一对主键在**不同 commit** 上再次命中（`cb29de6` 的 push run 仍是 `cargo-Linux-1.98.1-a9cf6559…` / `cargo-Windows-1.98.1-8d6560ea…`），说明 `Cargo.lock` 未变时的跨提交复用成立——这比同 commit 复跑更接近真实用法。
 4. **故意红一次（阻塞合并的唯一有效证据，同时收口 S0-3 的 A5）**：探针分支在 `src/app/mod.rs` 加一个真实使用 `noyalib::Value` 的函数（app 层禁 noyalib，走「完整限定路径」命中形态），PR [#1](https://github.com/quitone/keypeek/pull/1) / run [`36984104277`](https://github.com/quitone/keypeek/actions/runs/36984104277)：
    - **归因唯一**是设计出来的：本地先实测 fmt / build / clippy `-D warnings` / test / `verify-s0-4.sh` 全绿，只有 `check-layering.sh` exit 1；CI 里同样只有 `Dependency layering gate` 这一步 failure，其后三步 skipped，而 `build (windows-2022)` 仍 success。
    - 日志原文：`[violation] app 禁止 noyalib  src/app/mod.rs:5:pub fn layering_probe(value: noyalib::Value) -> noyalib::Value {` + `##[error]Process completed with exit code 1.`

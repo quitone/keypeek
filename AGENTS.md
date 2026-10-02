@@ -31,7 +31,7 @@ YAML 能力由 `noyalib` 提供（ADR-008，`serde_yaml` 已归档不用）；�
 - MSRV 由 `Cargo.toml` 的 `rust-version = "1.86"` 声明（`noyalib` 0.0.51 的硬性要求）
 - CI 缓存 key = `[os, rustc -vV 的 release 行, hashFiles('Cargo.lock')]`。**不要**改成 `hashFiles('rust-toolchain.toml')`：该文件内容恒为 `channel = "stable"`，编译器版本变了哈希不变，它提供不了 AGENTS.md 曾声称的保护。错配只浪费编译时间（cargo 指纹本身含编译器哈希），不是正确性问题
 - CI 流水线：`.github/workflows/ci.yml`，job = `check`（ubuntu-24.04，全部静态检查与三道门禁）+ `build`（windows-2022 矩阵轴，只 `cargo build --locked`）+ `ci-required`（汇总，分支保护只把这个 check 名设为 required）；所有 action 钉到 40 位 commit SHA，禁用 `@vN`/`@main` 可变标签与 `*-latest` runner
-- 流水线契约门禁：`bash scripts/verify-s0-4.sh`（14 条语义断言，同时被 CI 的 check job 调用）+ `bash scripts/verify-s0-4.sh --self-test`（33 项：26 个变异体各自以对应规则号变红、`&&` / 注释 `&` / `>&2` / `${{ }}` / YAML 锚点诱饵必须全绿、结构缺失 fail-closed）；改断言必须同步 `rules` 与 `expected_rule_pairs`
+- 流水线契约门禁：`bash scripts/verify-s0-4.sh`（14 组语义断言，同时被 CI 的 check job 调用）+ `bash scripts/verify-s0-4.sh --self-test`（35 项：27 个变异体/破坏样例各自以对应规则号变红、`&&` / 注释 `&` / `>&2` / `${{ }}` / YAML 锚点诱饵必须全绿、结构缺失 fail-closed）；改断言必须同步 `rules` 与 `expected_rule_pairs`
 - 改 CI 时的既有约束：分层检查依赖 GNU grep，只能放 ubuntu job；`cargo audit` 与 dependabot 属 S1，启用前必须先改 tech-plan §11.1；size-guard 属 S5-4
 - 脚手架验收门禁：`scripts/verify-s0-1.sh`（fmt → build → test → clippy `-D warnings` → 文件存在性检查）
 - 分层禁令检查：`bash scripts/check-layering.sh`（扫四层，真实仓库 <1s）+ `bash scripts/check-layering.sh --self-test`（含 152 项可证伪断言，约 30s，fixture 建在 `mktemp -d`）；改禁令必须同步 tech-plan §2.2、脚本 `rules` 与 `expected_rule_pairs`

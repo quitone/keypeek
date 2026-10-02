@@ -1,10 +1,12 @@
 name: CI
 
-# 触发：PR 与 main 推送。workflow_dispatch 用于手动复跑（验证缓存命中）。
+# 触发：PR 与主干推送。workflow_dispatch 用于手动复跑（验证缓存命中）。
+# 主干两个名字都列上：仓库默认分支实测为 master，只写 main 会让主干推送不触发
+# （首次 push 实测无 run），将来改名成 main 也不用回来改这里。
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [master, main]
   workflow_dispatch:
 
 # 全仓无写需求；流水线不部署、不发布产物（tech-plan §11.1 无部署阶段）。

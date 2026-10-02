@@ -472,7 +472,7 @@ Window (resizable)
 
 **缓存验收的两级指标**（避免把「配了缓存」当成「命中了缓存」）：① 同 commit 二次运行时缓存层日志出现 `Cache hit`；② 若将来引入 sccache，则要求 `sccache --show-stats` 的 `Compile hits > 0`，为 0 时记为「依赖图过小、预期无收益」，不记为缺陷。
 
-**流水线自身契约的可证伪性**：`scripts/verify-s0-4.sh` 对 workflow 做 14 条语义断言（结构、PR 触发、最小权限、action 钉 SHA、分层两个 step 齐全且只在 ubuntu、`--locked` 全覆盖、显式 Windows 标签且全仓无 `latest`、缓存 key 双要素、无后台 `&`、无服务器/守护/`|| true`、无 `continue-on-error`、汇总 job 契约、本地 parity），`--self-test` 用独立 canonical fixture 跑 **33 项断言**：26 个变异体必须各自以对应规则号变红（防止「因错误的原因变红」）、合法诱饵样例（`&&`、注释里的 `&`、`>&2` 重定向、`${{ }}`、YAML 锚点）必须保持全绿、结构缺失必须 fail-closed。YAML schema 合法性由 `actionlint` 负责，本机未安装时打 `[not-run]` 记账，不静默通过。
+**流水线自身契约的可证伪性**：`scripts/verify-s0-4.sh` 对 workflow 做 14 条语义断言（结构、触发完整性（pull_request + 主干 push 的 master/main 双列）、最小权限、action 钉 SHA、分层两个 step 齐全且只在 ubuntu、`--locked` 全覆盖、显式 Windows 标签且全仓无 `latest`、缓存 key 双要素、无后台 `&`、无服务器/守护/`|| true`、无 `continue-on-error`、汇总 job 契约、本地 parity），`--self-test` 用独立 canonical fixture 跑 **35 项断言**：27 个变异体/破坏样例必须各自以对应规则号变红（防止「因错误的原因变红」）、合法诱饵样例（`&&`、注释里的 `&`、`>&2` 重定向、`${{ }}`、YAML 锚点）必须保持全绿、结构缺失必须 fail-closed。YAML schema 合法性由 `actionlint` 负责，本机未安装时打 `[not-run]` 记账，不静默通过。
 
 **本轮明确不做**（各自有归属）：`cargo audit` 与 dependabot 移交 S1（启用 audit 必须先改本节表格，不让 job 跑在契约前面）；产物上传与发布链路属 S5。人设模板里的云侧交付物（Terraform / K8s / 蓝绿部署 / Prometheus / MTTR / 可用性 SLA）对一个离线桌面工具的 CI 不适用，本节无部署与监控阶段。
 

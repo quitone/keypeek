@@ -24,7 +24,7 @@ TMP=""
 # ---- 规则表：与 --self-test 的变异体一一对应。改规则必须同时改 expected_rule_pairs ----
 rules=(
   "R1|workflow 结构完整（jobs 段与 check/build/ci-required 三个 job）"
-  "R2|PR 触发（on 段含 pull_request）"
+  "R2|触发完整（pull_request 与主干 push，master/main 都要在列）"
   "R3|最小权限（permissions.contents 为 read 且不得为 write）"
   "R4|action 钉到 40 位 commit SHA"
   "R5|分层门禁两个 step 齐全（scan 与 --self-test）"
@@ -124,6 +124,8 @@ run_prog() {
 # 打掉锚点（实测让 R2/R8/R9/R13 同时静默失效，是这份脚本自己的第一批变异样本）。
 CODE_ONLY='$2 !~ /^[[:space:]]*#/'
 HAS_PR='BEGIN{hit=0} { if ($2 ~ /^[[:space:]]*-?[[:space:]]*pull_request:/) hit=1 } END{ if (!hit) print "0\t<pull_request 未出现>" }'
+HAS_PUSH_MASTER='BEGIN{hit=0} { if ($2 ~ /branches:.*master/) hit=1 } END{ if (!hit) print "0\t<push 触发未含 master>" }'
+HAS_PUSH_MAIN='BEGIN{hit=0} { if ($2 ~ /branches:.*main/) hit=1 } END{ if (!hit) print "0\t<push 触发未含 main>" }'
 HAS_READ='BEGIN{hit=0} { if ($2 ~ /contents:[[:space:]]*read/) hit=1 } END{ if (!hit) print "0\t<contents: read 未出现>" }'
 HAS_SCAN='BEGIN{hit=0} { if ($2 ~ /scripts\/check-layering\.sh[[:space:]]*$/) hit=1 } END{ if (!hit) print "0\t<缺 scan step>" }'
 HAS_SELFTEST='BEGIN{hit=0} { if ($2 ~ /check-layering\.sh[[:space:]]+--self-test/) hit=1 } END{ if (!hit) print "0\t<缺 self-test step>" }'
@@ -150,8 +152,12 @@ run_checks() {
     fi
   done
 
-  echo "== R2 PR 触发 =="
+  echo "== R2 PR 触发与主干推送触发 =="
   run_prog R2 "on 段缺 pull_request" "$HAS_PR" "$TMP/block_on.tsv"
+  run_prog R2 "push 触发缺 master（实测：只写 main 时推 master 不触发任何 run）" \
+    "$HAS_PUSH_MASTER" "$TMP/block_on.tsv"
+  run_prog R2 "push 触发缺 main（改名成 main 时主干推送会静默失效）" \
+    "$HAS_PUSH_MAIN" "$TMP/block_on.tsv"
 
   echo "== R3 最小权限 =="
   run_prog R3 "permissions 出现 contents: write" \
@@ -246,7 +252,7 @@ name: Fixture CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [master, main]
 
 permissions:
   contents: read
@@ -379,6 +385,8 @@ self_test() {
   echo "--- 2. 变异体：每条规则至少一个，且必须以该规则编号变红 ---"
   expect_blocked R1 "删掉 ci-required job" "$(mutate '/^  ci-required:/,$d')"
   expect_blocked R2 "删掉 pull_request 触发" "$(mutate '/^  pull_request:$/d')"
+  expect_blocked R2 "push 触发只留 main（回归本次实测到的不触发）" "$(mutate 's/branches: \[master, main\]/branches: [main]/')"
+  expect_blocked R2 "push 触发只留 master" "$(mutate 's/branches: \[master, main\]/branches: [master]/')"
   expect_blocked R3 "contents: read 改成 write" "$(mutate 's/contents: read/contents: write/')"
   expect_blocked R3 "删掉 contents: read" "$(mutate '/^  contents: read$/d')"
   expect_blocked R4 "action 退回可变标签 @v7" \

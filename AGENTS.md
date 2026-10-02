@@ -4,9 +4,11 @@ Keypeek（键览）：跨平台只读快捷键浏览桌面工具（Rust + fltk-r
 
 ## 文档即契约（动手前先读）
 
-- `prd.md` — 产品需求与数据模型（YAML 结构、字段规则、九条键帽用例）
-- `tech-plan.md` — 架构、ADR、CI 强制依赖规则
-- `sprint-plan.md` — 任务与验收标准
+- `specification-doc/prd.md` — 产品需求与数据模型（YAML 结构、字段规则、九条键帽用例）
+- `specification-doc/tech-plan.md` — 架构、ADR、CI 强制依赖规则
+- `specification-doc/sprint-plan.md` — 任务与验收标准
+
+三份规划文档统一放在 `specification-doc/` 下并**保持版本控制跟踪**（它们是契约，不是本机草稿）。
 
 ## 分层单体结构（tech-plan §2）
 

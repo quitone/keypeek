@@ -334,6 +334,97 @@
 
 ---
 
+### CI 契约门禁加固批（S1-16 ~ S1-21）的来源与顺序
+
+2026-10-02 对 S0-4 做回溯式复盘（盲态计划 → 三方审查 → 修订版）时，用实物复现出 6 条契约门禁缺陷。**全部为本机实测复现，不是静态推断**；复现命令即各任务的验收起点，改前必须复现、改后必须变红/变绿符合预期。控制组已验证：同一注入下 `sleep 1 &` 会以 R10 变红（exit=1），所以下面的 exit=0 是真漏而非脚手架失效。
+
+| # | 破坏方式 | 实测结果 |
+|---|---|---|
+| ① | 删掉 `ci.yml` 的 Format + Clippy 两个 step | `verify-s0-4.sh` exit=0（漏） |
+| ② | 注入 `- run: disown -a` | exit=0（漏）；对照 `sleep 1 &` → exit=1 |
+| ③ | 注释里写「原先用 windows-latest」 | exit=1（误杀，报 `[violation] R8`） |
+| ④ | 删 `verify-s0-4.sh:157-158`（R2 的 master 子断言）+ `:388`（其对应变异体） | self-test **34 通过/0 失败**，且扫 `[main]`-only 的 ci.yml exit=0（原版报 2 条 R2） |
+| ⑤ | `grep -n key rust-toolchain.toml` | `:4` 仍写「key 必须为 [os, rust-toolchain.toml, Cargo.lock]」，与 `AGENTS.md:32`（已按 ADR-011 改用 `rustc -vV` release 行并明令禁用前者）矛盾 |
+| ⑥ | `grep -rn 'protection\|required_status' scripts/ .github/` | 命中 0：required check 被删改时仓内无任何门禁变红 |
+
+**执行顺序**：S1-16 是其余各条的前提（先修粒度机制，再往规则表里加东西）→ S1-17/18/19 可与 S1-16 同批提交（都只改 `scripts/verify-s0-4.sh`）→ S1-20 单列（涉及新退出码语义，须先改 §11.1）→ S1-21 纯文档随时可做。
+**与已登记交接项的关系**：sprint-plan S0-4「给 S1」那条（`cargo audit`、dependabot、`ci-required` 因矩阵改名失效的复验）与本批**并列不重复**；本批不新增 S1 的 2 周估算占用，若并行度不足由使用者决定挪到 S2，不要偷偷塞进 S1-1~15 的提交里。
+**收尾要求**：这批全部改完后需按修订版 Step 4 的形态重跑一次红探针取证（依赖树内 token 越界、可编译、其余 step 全绿、归因唯一）——涉及写远端分支与一次性 PR，**须先获使用者授权**。
+
+---
+
+### [ ] 任务 S1-16：契约门禁断言粒度机制——禁止「切片删除」
+**描述**：`verify-s0-4.sh` 的 `ST_COVERED`（`:309/455`）只按**规则 id** 记账，`rules` 的描述文字（`:439`）仅贡献条数。多子断言规则（R2 三条、R9 三条、R13 三条）里删一条子断言加其对应变异体，`rules` / `expected_rule_pairs` / `run_prog` 行 / 变异体四个书面产物仍自洽 → self-test 全绿而看护已消失。改为**子断言粒度**：每条子断言一行一号（`R2.1/R2.2/R2.3` 形态），新增字面基准 `expected_assertion_pairs` + `expected_assertion_count`，`ST_COVERED` 按子断言号要求至少一个变异体命中，`rules` 描述与子断言号建立机械绑定。
+**验收标准**：
+- 上表 ④ 的复现路径在改后必须以非 0 退出（当前 exit=0）
+- 删任一子断言而不配套改基准 → self-test 红；删整条规则 → 仍按现有机制红（不回归）
+- self-test 覆盖分母由 14/14（规则粒度）改为子断言粒度并打印
+- 改断言必须同步 `rules`、`expected_rule_pairs`、新增的两个基准（AGENTS.md 已有同构约定）
+- 诱饵：注释里出现规则编号字样不得误杀
+
+**对应方案**：§11.1、§11.2
+
+---
+
+### [ ] 任务 S1-17：check 步序 step 存在性断言（新规则 R15）
+**描述**：当前 14 条规则无一断言 fmt/build/clippy/test 这些 step 存在（实测删掉 Format + Clippy 两步 exit=0）。新增 R15「check job 步序齐全且有序」，字面基准为脚本内**手写的 step 名/命令清单**（Format → Build → Clippy → Test → Dependency layering gate → … self-test → S0-2 dependency manifest gate → Workflow contract gate），不得从 `ci.yml` 反推（基准取自被测对象即自证）。
+**验收标准**：
+- 删任一步 / 调换顺序 / 去掉 `--check` / 去掉 `-D warnings` 四类变异各以 R15 变红
+- 现有破坏样例（删 Format+Clippy）由 exit=0 转为变红
+- 注释里提及 step 名 → 不红（与 S1-19 的剥注释要求联动）
+- 同步补 R15 的变异体与子断言号（依赖 S1-16）
+
+**对应方案**：§11.1
+
+---
+
+### [ ] 任务 S1-18：R11 禁止名单补全
+**描述**：R11（`:229`）名单为 `nohup|setsid|http\.server|xvfb|--no-verify|python -m|\|\| true`，实测 `disown -a` 通过。按「质量要求」原文（无后台进程、不启动服务器）补齐 `disown`、`bg`、`jobs -p`、行尾 `&` 形态，并产出一张「名单外即记账」缺口表，列明哪些后台化手段仍靠人审。
+**验收标准**：
+- 注入 `- run: disown -a` → 以 R11 变红（当前 exit=0）
+- 每条新增项各配一个诱饵（注释里提 `disown`、文档链接里含 `--no-verify`）→ 必须不红
+- 控制组 `sleep 1 &` 仍以 R10（而非 R11）变红，规则号不串味
+
+**对应方案**：§11.1、质量要求
+
+---
+
+### [ ] 任务 S1-19：全组扫描统一剥注释
+**描述**：R8（`:213-214`）与 R12（`:232-233`）用裸 `$2 ~ /latest/`、`/continue-on-error/`，未加 `$CODE_ONLY` 前缀；R10/R11 剥了。后果是惩罚解释性注释——而「把偏差写进注释」正是本仓库文体（ADR-011 那批 commit 全靠注释留痕）。方向上 fail-closed，但会激励删注释，属实质缺陷。
+**验收标准**：
+- 注释含 `windows-latest` / `continue-on-error` 字样 → 不红（当前 exit=1 误杀）
+- 代码位出现同样字样 → 必红（双向看护，两条诱饵 + 两条变异体）
+- 现有 self-test 项数只增不减；`verify-s0-4.sh` 自身纳入卫生扫描时不自炸（头注释已列举禁令名）
+
+**对应方案**：§11.1、§11.2
+
+---
+
+### [ ] 任务 S1-20：分支保护配置的可重放取证
+**描述**：`gh api repos/quitone/keypeek/branches/master/protection/required_status_checks` 今天返回 `["ci-required"]`，但这是人工记账——仓内零看护（实测 grep 命中 0），配置被删改后 CI 照样全绿。给 `verify-s0-4.sh` 增加只读取证模式：断言 required 名单 == 字面基准 `ci-required`、`strict=false`、`enforce_admins=false`；无 `gh`/无网络/无凭据时逐条打 `[not-run]`，并用**独立退出码**区分「断言失败」与「仅缺证据」（现有 `die_tool` 用 3，需一并写进文档）。
+**边界**：该模式**不进 CI**（拿不到自身保护语义，且会引入网络依赖），只挂本地与发布前检查；**启用前必须先增补 tech-plan §11.1 表格**，不让检查跑在契约前面。
+**验收标准**：
+- 临时把 required 名单改成 `["check"]` → 取证模式红；改回 → 绿
+- 断网/无 `gh` → 退出码不等于 0 也不等于失败码，且逐条 `[not-run]` 可见，不静默通过
+- S0-4b 那条「`enforce_admins=false` 下管理员能否绕过未实测」的 not-run 仍留在账上，不因本任务悄悄销账
+
+**对应方案**：§11.1、ADR-011
+
+---
+
+### [ ] 任务 S1-21：文档一致性收口（缓存 key 话术与 N-03）
+**描述**：ADR-011 已纠正 `AGENTS.md:32` 与 sprint-plan 的缓存 key 话术，但 `rust-toolchain.toml:4` 注释仍是旧三要素（该文件自 `427d214` 起未动过），构成第三处矛盾。同时 PRD **N-03** 字面要求「Rust 使用 sccache + Cargo 缓存」，与 ADR-011 实测取舍「意图（复用缓存）满足、手段（编译级缓存）在小依赖图无信号」冲突。
+**改动对象**：`rust-toolchain.toml` 注释 + `prd.md` N-03 措辞（改写为「构建产物复用缓存；缓存 key 必须含编译器版本真值与 `Cargo.lock`；编译级缓存在出现 C 依赖后重评，触发条件见 ADR-011」，保留一行原文脚注指向 ADR-011，不静默改写历史）。
+**验收标准**：
+- `grep -rn 'hashFiles..rust-toolchain' .` 无残留声称；`rust-toolchain.toml` 注释与 `AGENTS.md:32` 一致
+- N-03 与 ADR-011、S0-4 偏差段三者表述互不矛盾
+- 纯文档改动，CI 行为零变化（不得顺手改 `ci.yml`）
+- **改 N-03 属需求文档变更，须先获使用者确认**
+
+**对应方案**：N-03、ADR-011、§11.1
+
+---
+
 ## Sprint 2 — 基础设施与领域收尾（1.5 周）
 
 ### [ ] 任务 S2-1：目录扫描（`infra::catalog::scan`）

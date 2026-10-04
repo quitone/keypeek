@@ -3,4 +3,5 @@
 //! 允许：`noyalib` 的纯数据类型（`Value` / `Mapping`），S0-3 定案，见 tech-plan ADR-008 与 §2.2。
 
 pub mod error;
+pub mod keycap;
 pub mod model;

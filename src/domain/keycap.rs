@@ -1,6 +1,7 @@
 //! 键帽拆分主流程骨架（tech-plan §5.1 步骤 1–3，任务 S1-2）。
 //! domain 层纯逻辑：禁止 fltk / std::fs / dirs（§2.2 禁令，check-layering 强制）。
-//! S1-2 只做结构与切分：归一化归 S1-3/4，Angle 段语义归 S1-5/6（疑点 Q-5）。
+//! S1-2 定结构与切分；S1-3 加已知键名表与「命中→规范形」归一化（ADR-009）；
+//! 未命中段的逐字符拆分归 S1-4，Angle 段语义归 S1-5/6（疑点 Q-5）。
 #![allow(dead_code)] // bin-only 现状：生产调用方在 S2/S3 接线；接线后移除本行交由 clippy -D warnings 复证
 
 /// 组合键内的中间段（§5.1 步骤 2 的产物）。
@@ -85,14 +86,103 @@ fn push_literal_chunks<'a>(text: &'a str, out: &mut Vec<Segment<'a>>) {
     }
 }
 
-/// S1-2 占位落点：两类段一律**原样输出**——不查表、不归一化、不逐字符、不碰别名。
-/// 翻转链（S1-1~S1-4 计划修订 #2 / RSK-3）：S1-3 把 Literal 臂接 normalize_literal
-/// （命中表→规范形）；S1-4 让未命中段逐字符拆，并把 `bare_dash_stays_literal_until_s1_4`
-/// 同 commit 翻转为 `bare_dash_split_per_char`（`"C-k"` → `["C", "-", "k"]`）；
-/// Angle 臂由 S1-5/6 接管（Q-5）。
+/// 已知键名表（tech-plan §5.1 步骤 4 的查表基准，任务 S1-3 的唯一交付常量）。
+///
+/// **关键设计点：本表绝不含单字母别名**（tech-plan.md:228 原文）。
+/// `g+s+a` 拆出的 `s` 必须是键帽 `s`，不能被当成 Shift；Shift 的单字母别名 `s`
+/// 只存在于 `<...>` 的修饰键上下文（S1-6 的**独立**修饰键别名表
+/// `c`/`ctrl`/`s`/`shift`/`a`/`alt`/`m`/`meta`/`d`/`cmd`/`super`，tech-plan.md:225），
+/// 两表严格分离：本表服务字面量段的整体匹配，那张表只服务 `<X-key>` 的前缀位。
+/// 单字母一旦进了本表，所有连按字面量（`gsa`、`C-k` 的 `C`）都会被误归一化成修饰键。
+///
+/// 35 条 = 23 个非 F 键 + F1..F12。契约两处都是**开放集**（sprint-plan S1-3 结尾的
+/// `/...`、PRD §5.5 键名清单结尾的「等」），收敛成封闭集属**工程收敛的实现决策**
+/// （疑点 Q-4），非契约逐字要求；`Delete`/`Insert`/`Up`/`Down`/`Left`/`Right` 六条是
+/// 契约未点名的补齐项。增删条目须走「先记疑点再改基准」：先更新本注释与
+/// verify-s1-3.sh 的基准数组（及其 rules / expected_rule_pairs 同步），再动代码。
+const KNOWN_KEY_NAMES: &[&str] = &[
+    "Ctrl",
+    "Alt",
+    "Shift",
+    "Cmd",
+    "Super",
+    "Meta",
+    "Leader",
+    "LocalLeader",
+    "Enter",
+    "Esc",
+    "Tab",
+    "Space",
+    "Backspace",
+    "Delete",
+    "Insert",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+    "Up",
+    "Down",
+    "Left",
+    "Right",
+    "F1",
+    "F2",
+    "F3",
+    "F4",
+    "F5",
+    "F6",
+    "F7",
+    "F8",
+    "F9",
+    "F10",
+    "F11",
+    "F12",
+];
+
+/// 别名表：ADR-009（tech-plan.md:648）逐字举例只给了 `ctrl → Ctrl`（由主表的大小写
+/// 不敏感匹配覆盖，无需入表）与 `pgdn → PageDown`；`pgup → PageUp` 是与后者对称的
+/// 工程收敛（同属疑点 Q-4）。键一律小写、**绝不含单字母**（与主表同一理由），
+/// 规范形一侧必须本身就是主表条目（`alias_targets_are_table_entries` 看护）。
+const KEY_ALIASES: &[(&str, &str)] = &[("pgdn", "PageDown"), ("pgup", "PageUp")];
+
+/// 查表：先别名、后主表，大小写不敏感（ADR-009：`ctrl` → `Ctrl`、`pgdn` → `PageDown`）。
+/// 比对用 `eq_ignore_ascii_case`，不用 `to_lowercase()`：后者返回 `String`（每次查表一次堆
+/// 分配），而键名集是纯 ASCII，ASCII 折叠已覆盖全部合法输入；本函数零分配、零 panic。
+/// 单字母（含数字）必不命中——见 `lookup_single_letter_misses` 的全量行为看护。
+fn lookup_key_name(seg: &str) -> Option<&'static str> {
+    for (alias, canonical) in KEY_ALIASES {
+        if alias.eq_ignore_ascii_case(seg) {
+            return Some(*canonical);
+        }
+    }
+    for name in KNOWN_KEY_NAMES {
+        if name.eq_ignore_ascii_case(seg) {
+            return Some(*name);
+        }
+    }
+    None
+}
+
+/// S1-3 落点：字面段整体命中表 → 输出规范形；未命中**暂时**原样输出。
+/// 未命中的另一半（逐字符拆：`gsa` → `g` `s` `a`）是 tech-plan §5.1 步骤 4 的收尾，归 S1-4：
+/// 届时本函数体加 `chars()` 分支，`unknown_multichar_stays_verbatim_until_s1_4` 与
+/// `bare_dash_stays_literal_until_s1_4` 同 commit 翻转（verify-s1-4 R3 看护测试名翻转）。
+fn normalize_literal(seg: &str) -> Vec<String> {
+    if seg.is_empty() {
+        // D-1 兜底：空段产 0 帽（正常路径下 push_literal_chunks 已把空段挡在门外）。
+        return Vec::new();
+    }
+    match lookup_key_name(seg) {
+        Some(canonical) => vec![canonical.to_string()],
+        None => vec![seg.to_string()],
+    }
+}
+
+/// 段到键帽的落点。Literal 臂已由 S1-3 接到 `normalize_literal`（命中表→规范形，
+/// 未命中暂原样）；Angle 臂维持 S1-2 占位——剥壳原文 `raw` 的显式映射、`-` 切分与
+/// 兜底语义归 S1-5/6（疑点 Q-5、张力 RSK-9），S1-3 不顺手接管。
 fn resolve_segment(segment: Segment<'_>) -> Vec<String> {
     match segment {
-        Segment::Literal(text) => vec![text.to_string()],
+        Segment::Literal(text) => normalize_literal(text),
         Segment::Angle(raw) => vec![raw.to_string()],
     }
 }
@@ -177,5 +267,105 @@ mod tests {
         assert!(split_keycaps("+").is_empty());
         assert!(split_keycaps("++").is_empty());
         assert_eq!(split_keycaps("a+"), vec!["a"]);
+    }
+
+    #[test]
+    fn lookup_ctrl_hits() {
+        // 契约验收第二条前半：查表 "ctrl" 命中（大小写四种写法同一规范形）。
+        for input in ["ctrl", "CTRL", "Ctrl", "cTrL"] {
+            assert_eq!(lookup_key_name(input), Some("Ctrl"), "{input} 应命中 Ctrl");
+        }
+    }
+
+    #[test]
+    fn lookup_single_letter_misses() {
+        // 契约验收第二条后半 + §5.1 关键设计点的**行为面**看护（静态面是门禁 R3）：
+        // a-zA-Z0-9 全量查表，一个都不许命中——`s` 是键帽 `s`，不是 Shift。
+        for ch in ('a'..='z').chain('A'..='Z').chain('0'..='9') {
+            assert_eq!(
+                lookup_key_name(&ch.to_string()),
+                None,
+                "单字符 {ch} 不得命中键名表"
+            );
+        }
+    }
+
+    #[test]
+    fn table_has_no_single_char_entries() {
+        // 契约验收第一条：表内无单字符条目（按 chars 计，非字节；主表与别名表键/值两侧都查）。
+        for name in KNOWN_KEY_NAMES {
+            assert!(name.chars().count() >= 2, "主表出现单字符条目 {name}");
+        }
+        for (alias, canonical) in KEY_ALIASES {
+            assert!(alias.chars().count() >= 2, "别名表出现单字符键 {alias}");
+            assert!(
+                canonical.chars().count() >= 2,
+                "别名表规范形 {canonical} 过短"
+            );
+        }
+    }
+
+    #[test]
+    fn table_round_trips_to_canonical() {
+        // 35 条逐一回指自身，且小写形同样命中：证明「规范形 = 表内写法」与大小写不敏感。
+        for name in KNOWN_KEY_NAMES {
+            assert_eq!(lookup_key_name(name), Some(*name), "{name} 应回指自身");
+            assert_eq!(
+                lookup_key_name(&name.to_lowercase()),
+                Some(*name),
+                "{} 的小写形应命中",
+                *name
+            );
+        }
+    }
+
+    #[test]
+    fn alias_lookup_is_case_insensitive() {
+        for input in ["pgdn", "PGDN", "PgDn"] {
+            assert_eq!(
+                lookup_key_name(input),
+                Some("PageDown"),
+                "{input} 应命中 PageDown"
+            );
+        }
+        for input in ["pgup", "PGUP"] {
+            assert_eq!(
+                lookup_key_name(input),
+                Some("PageUp"),
+                "{input} 应命中 PageUp"
+            );
+        }
+    }
+
+    #[test]
+    fn alias_targets_are_table_entries() {
+        // 别名的落点必须本身就在主表里，否则 ADR-009 的规范形无源，S1-6 复用主表时会出现两套规范形。
+        for (alias, canonical) in KEY_ALIASES {
+            assert!(
+                lookup_key_name(canonical) == Some(*canonical),
+                "别名 {alias} 的规范形 {canonical} 不在主表"
+            );
+        }
+    }
+
+    #[test]
+    fn known_segment_normalized_in_pipeline() {
+        // 端到端：命中段经管线（split_combo → resolve_segment → normalize_literal）产出规范形。
+        assert_eq!(split_keycaps("ctrl+alt"), vec!["Ctrl", "Alt"]);
+        assert_eq!(split_keycaps("pgdn"), vec!["PageDown"]);
+        assert_eq!(
+            split_keycaps("shift+meta+cmd"),
+            vec!["Shift", "Meta", "Cmd"]
+        );
+    }
+
+    #[test]
+    fn unknown_multichar_stays_verbatim_until_s1_4() {
+        // **中间态钉桩**（RSK-3）：S1-3 只完成「命中→规范形」，未命中段仍原样输出。
+        // S1-4 落地时同 commit 翻转为 unknown_multichar_split_per_char（["g","s","a"]）。
+        // 本测试名**不被 verify-s1-3 钉住**（修订 #8：门禁必须状态无关，S1-4 回跑本门禁须绿），
+        // 看护它翻转的是 verify-s1-4 的 R3。
+        assert_eq!(split_keycaps("gsa"), vec!["gsa"]);
+        assert_eq!(split_keycaps("C-k"), vec!["C-k"]);
     }
 }

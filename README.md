@@ -6,6 +6,8 @@
 Keypeek 让你把各个应用的快捷键定义整理成简单的 YAML 文件，然后在一个界面里快速查看、搜索、过滤。  
 它**只读**、**离线**、**不修改你的文件**，就像一个专属的快捷键速查手册。
 
+> **当前状态：开发中，尚未发布。** 项目处于 Sprint 0 脚手架阶段，没有可执行文件下载（Releases 为空）。「界面说明」「设置」「搜索技巧」描述的是目标形态，实现落在 Sprint 3 之后；「💻 系统要求」「📝 编写你的快捷键 YAML」「🧱 依赖与维护状态」三节反映当前契约。
+
 ---
 
 ## ✨ 功能亮点
@@ -22,21 +24,35 @@ Keypeek 让你把各个应用的快捷键定义整理成简单的 YAML 文件，
 
 ## 💻 系统要求
 
-- **Linux x64**：需要 X11 运行库（大多数桌面发行版已自带）。
-- **Windows 10 x64**：直接运行，无需额外安装。
+- **Linux x64**：需要 X11 运行库，以及 pango / cairo 绘制库。多数桌面发行版已自带下列清单，它主要给无图形界面的 CI / docker 验证环境用。
+
+  Debian/Ubuntu 运行时依赖（13 项，逐个安装即可）：
+
+  ```bash
+  sudo apt-get install -qq --no-install-recommends \
+    libx11-6 libxinerama1 libxft2 libxext6 libxcursor1 libxrender1 libxfixes3 \
+    libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libpangoxft-1.0-0 libglib2.0-0 libfontconfig1
+  ```
+
+  额外两项 `libglu1-mesa`、`libgl1` 只在启用 `fltk` 的 `enable-glwindow` 特性时才需要（是否开启该特性由 S3 定案，当前不在上面的必需清单里）。
+
+  清单来源：fltk-rs 上游 README 的「Runtime Dependencies / Linux」，核实日期 2026-10-04；本项目侧依据为 tech-plan §11.3（FLTK 静态编译、运行时需 X11 库）与风险项 R-07（README 须明确列出依赖）。
+  本仓库尚未引入 `fltk`（S3 才进依赖树），所以上面是**文档级齐全**的清单：与真实产物的一致性未经 `ldd` 实测，记 not-run，待 S3 引入 fltk 后以构建产物复验、S5-9 收口。
+
+- **Windows 10 x64**：直接运行，无需额外安装（上游记录 Windows 无运行时依赖；本机无 Windows 环境，该结论同样记 not-run）。
 
 ---
 
 ## 📥 下载与安装
 
-1. 前往 Releases 页面，下载对应平台的可执行文件。
+1. 前往 Releases 页面，下载对应平台的可执行文件。**当前尚未发布任何版本**（Sprint 0 无产物），这一步待 S5-9 提供首个 release 后生效。
 2. **Windows**：双击 `.exe` 即可运行。
 3. **Linux**：赋予执行权限后运行：
    ```bash
    chmod +x keypeek
    ./keypeek
    ```
-   如果提示缺少库，请安装 X11 相关依赖（如 `libx11`、`libxft` 等，具体以发行版为准）。
+   如果提示缺少库，请按上文「💻 系统要求」一节列出的 13 项运行时依赖**逐个**安装——那份清单是完整集合，没有"等等"的省略项。
 
 ---
 
@@ -70,7 +86,7 @@ Keypeek 没有“刷新”按钮，这是为了保持简单和只读。
 
 ## 📝 编写你的快捷键 YAML
 
-YAML 是一种简单的文本格式，用记事本就能编辑。下面是一个最小示例：
+YAML 是一种简单的文本格式，用记事本就能编辑。下面是一个最小示例，结构与 PRD §4「数据模型」逐一对应（只有 `description` 等示例值取中文，方便直接照抄）：
 
 ```yaml
 icon: "🟦"                   # 应用图标：emoji 或本地图片路径
@@ -185,7 +201,7 @@ A：检查图片路径是否正确、格式是否支持、大小是否超标。�
 A：确认字体名拼写正确，且系统已安装该字体。找不到时会回退默认字体。
 
 **Q：Linux 上启动报错缺少库？**  
-A：请安装 X11 相关运行库，例如 Debian/Ubuntu 可尝试 `sudo apt install libx11-6 libxft2 libxinerama1 libxcursor1`。
+A：请安装 X11 与 pango/cairo 运行库，Debian/Ubuntu 完整清单：`sudo apt-get install -qq --no-install-recommends libx11-6 libxinerama1 libxft2 libxext6 libxcursor1 libxrender1 libxfixes3 libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libpangoxft-1.0-0 libglib2.0-0 libfontconfig1`。
 
 **Q：支持 `.yml` 文件吗？**  
 A：只支持 `.yaml`，不识别 `.yml`。
@@ -216,16 +232,16 @@ A：不可以。Keypeek 是只读工具，请直接编辑 YAML 文件。
 | `noyalib` | `0.0.51` + `compat-serde-yaml` | YAML 解析（替代已归档的 `serde_yaml`） | infra / domain（S0-3 定案：`Value` 等纯数据类型可进 domain） | **0.0.x 预发布**，单人维护（核实 2026-10-01） | 与上游 serde_yaml 0.9 存在布尔/合并键等行为差异；`0.0.*` 内可随时破坏兼容 | `domain::parse` 只依赖通用 `Value`，替换成本限于一个文件 |
 | `dirs` | `6` | 配置目录定位 | infra | 活跃 | Win/Linux 路径差异 | 自实现 `std::env` 分支 |
 | `pretty_assertions` | `1`（dev） | 断言差异可读 | tests | 活跃 | 无 | 去掉依赖即可 |
+| `tempfile` | `3`（dev） | 单测临时目录注入（S0-5 起在用） | tests / 各层 `#[cfg(test)]` 区块 | 活跃 | 无 | 去掉依赖即可 |
 
 ### 计划引入（尚未进 `Cargo.toml`，勿提前加）
 
 | crate | 引入 Sprint | 用途 | 体积/风险备注 |
 |---|---|---|---|
-| `fltk` | S3 | 自绘 UI | 静态编译，Linux 需 X11 运行库（R-07） |
+| `fltk` | S3 | 自绘 UI | 静态编译，Linux 需 X11 + pango/cairo 运行库（R-07，完整清单见「💻 系统要求」；引入后须用真实产物 `ldd` 复验该清单） |
 | `indexmap` | S1/S2 | 有序字段承载 | `noyalib::Mapping` 已是 `IndexMap`，先确认能否直接复用再决定加依赖 |
 | `image` | S4 | PNG/JPEG/WebP/GIF 解码 | 需关闭非必需特性以省体积（S5-5） |
 | `resvg` / `usvg` / `tiny-skia` | S4 | SVG 栅格化 | R-02：可能撑破 15 MB，S5-5 实测后决定降级路径 |
-| `tempfile` | S0-5 | 单测临时目录注入 | dev 依赖 |
 
 ### 版本与可复现约定
 

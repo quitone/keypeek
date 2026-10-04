@@ -75,6 +75,9 @@ jobs:
       - name: S0-6 README gate
         run: bash scripts/verify-s0-6.sh
 
+      - name: S1-1 domain model gate
+        run: bash scripts/verify-s1-1.sh
+
   # build：跨平台可编译性。矩阵轴当前只有 Windows；S3 加 fltk 原生依赖时再扩轴，
   # 届时 required check 名由 ci-required 汇总 job 固定住，分支保护不用改。
   build:
